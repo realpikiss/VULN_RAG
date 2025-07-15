@@ -1,371 +1,350 @@
 # core/retrieval/document_assembler.py
 """
-Document Assembler pour VulRAG
-Récupère le contenu complet des documents à partir des clés RRF
-et assemble le contexte enrichi pour le LLM.
+Document Assembler for Vuln_RAG - VERSION WHOOSH
+Retrieves the complete content of documents from the enriched Whoosh index
+and assembles the enriched context for the LLM.
 """
 
 import json
 import logging
+import os
+import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Union
+from dataclasses import dataclass, field
 
-from .fusion_controller import FusionCandidate
+from whoosh.index import open_dir
+from whoosh.query import Term, Or
 
 logger = logging.getLogger(__name__)
 
 @dataclass 
 class EnrichedDocument:
-    """Document complet assemblé depuis les 3 KBs"""
+    """Complete document assembled from the enriched Whoosh index""" 
     key: str
     final_score: float
     
-    # Contenu KB1 (texte)
+    # Content KB1 (descriptive text)
     gpt_purpose: str = ""
     gpt_function: str = ""
+    gpt_analysis: str = ""
+    solution: str = ""
     code_before_change: str = ""
     code_after_change: str = ""
     cve_id: str = ""
     
-    # Contenu KB2 (structure)  
-    embedding_text: str = ""
-    dangerous_functions: List[str] = None
-    cpg_signature: Dict = None
+    # CPG KB1 analysis
+    cpg_vulnerability_pattern: str = ""
+    patch_transformation_analysis: str = ""
+    detection_cpg_signature: str = ""
+    remediation_graph_guidance: str = ""
     
-    # Métadonnées
+    # KB2 enriched content (from Whoosh)
+    embedding_text: str = ""
+    dangerous_functions: List[str] = field(default_factory=list)
+    dangerous_functions_count: int = 0
+    dangerous_functions_detected: bool = False
+    risk_class: str = "unknown"
+    complexity_class: str = "unknown"
+    
+    #   Patch analysis from KB2
+    dangerous_functions_added: List[str] = field(default_factory=list)
+    dangerous_functions_removed: List[str] = field(default_factory=list)
+    net_dangerous_change: int = 0
+    
+    # Enriched metadata
     cwe: str = ""
-    provenance: Dict = None
+    code_lines_count: int = 0
+    has_code_before: bool = False
+    has_code_after: bool = False
+    vulnerability_behavior: Dict = field(default_factory=dict)
+    modified_lines: Dict = field(default_factory=dict)
+    
+    # Provenance details
+    provenance: Dict = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validation and post-initialization calculations"""
+        # Calculate derived indicators
+        self.has_dangerous_functions = self.dangerous_functions_count > 0
+        self.vulnerability_severity = self._calculate_severity()
+    
+    def _calculate_severity(self) -> str:
+        """Calculate severity based on available indicators"""
+        if self.risk_class in ["high", "critical"]:
+            return "high"
+        elif self.dangerous_functions_count >= 3:
+            return "medium"
+        elif self.dangerous_functions_count > 0:
+            return "low"
+        else:
+            return "unknown"
 
 class DocumentAssembler:
-    """Assemble les documents complets à partir des clés RRF"""
+    """Assemble the complete documents from the enriched Whoosh index"""
     
-    def __init__(self, 
-                 kb1_path: str = "data/KBs/JSON_FORMAT_KB/kb1.json",
-                 kb2_metadata_path: str = "data/KBs/kb2_index/kb2_metadata.json", 
-                 kb3_metadata_path: str = "data/KBs/kb3_index/kb3_metadata.json"):
+    def __init__(self, index_path: Optional[str] = None):
         """
         Args:
-            kb1_path: Chemin vers KB1 JSON complet
-            kb2_metadata_path: Chemin vers métadonnées KB2
-            kb3_metadata_path: Chemin vers métadonnées KB3
+            index_path: Path to the enriched Whoosh index (KB1 + KB2)
         """
-        self.kb1_path = Path(kb1_path)
-        self.kb2_metadata_path = Path(kb2_metadata_path)
-        self.kb3_metadata_path = Path(kb3_metadata_path)
+        self.index_path = index_path or os.getenv("KB1_INDEX_PATH", "data/KBs/kb1_index")
         
-        # Charger les données sources
-        self._load_kb_data()
+        # Lazy loading of the index
+        self._index = None
+        
+        # Statistics
+        self._stats = {
+            "index_loaded": False,
+            "documents_assembled": 0,
+            "assembly_errors": 0,
+            "cache_hits": 0
+        }
+        
+        logger.info(f"DocumentAssembler initialisé avec index: {self.index_path}")
     
-    def _load_kb_data(self):
-        """Charge les données des 3 KBs en mémoire"""
-        logger.info("Chargement des données KB...")
-        
-        # KB1 - Données complètes
-        if self.kb1_path.exists():
-            with open(self.kb1_path, 'r', encoding='utf-8') as f:
-                self.kb1_data = json.load(f)
-        else:
-            logger.warning(f"KB1 non trouvé: {self.kb1_path}")
-            self.kb1_data = {}
+    @property
+    def index(self):
+        """Lazy loading of the Whoosh index"""
+        if self._index is None:
+            self._load_index()
+        return self._index
+    
+    def _load_index(self):
+        """Load the Whoosh index"""
+        try:
+            if not Path(self.index_path).exists():
+                raise FileNotFoundError(f"Index Whoosh not found: {self.index_path}")
             
-        # KB2 - Métadonnées  
-        if self.kb2_metadata_path.exists():
-            with open(self.kb2_metadata_path, 'r', encoding='utf-8') as f:
-                self.kb2_metadata = json.load(f)
-                self.kb2_lookup = {item['key']: item for item in self.kb2_metadata}
-        else:
-            logger.warning(f"KB2 metadata non trouvé: {self.kb2_metadata_path}")
-            self.kb2_lookup = {}
+            self._index = open_dir(self.index_path)
+            self._stats["index_loaded"] = True
             
-        # KB3 - Métadonnées
-        if self.kb3_metadata_path.exists():
-            with open(self.kb3_metadata_path, 'r', encoding='utf-8') as f:
-                self.kb3_metadata = json.load(f)
-                self.kb3_lookup = {item['key']: item for item in self.kb3_metadata}
-        else:
-            logger.warning(f"KB3 metadata non trouvé: {self.kb3_metadata_path}")
-            self.kb3_lookup = {}
-            
-        logger.info(f"KB1: {len(self.kb1_data)} entrées")
-        logger.info(f"KB2: {len(self.kb2_lookup)} entrées") 
-        logger.info(f"KB3: {len(self.kb3_lookup)} entrées")
+            with self._index.searcher() as searcher:
+                doc_count = searcher.doc_count()
+                logger.info(f"Index Whoosh loaded: {doc_count} documents from {self.index_path}")
+                
+        except Exception as e:
+            logger.error(f"Error loading Whoosh index: {e}")
+            raise
     
     def assemble_documents(self, 
-                          candidates: List[FusionCandidate],
-                          top_k: int = 5) -> List[EnrichedDocument]:
+                          candidates: List,  # FusionCandidate objects
+                          top_k: int = 5,
+                          include_code: bool = True,
+                          include_cpg: bool = True) -> List[EnrichedDocument]:
         """
-        Assemble les documents enrichis à partir des candidats RRF
+        Assemble the enriched documents from the Whoosh index
         
         Args:
-            candidates: Liste des candidats avec scores RRF
-            top_k: Nombre de documents à assembler
+            candidates: List of FusionCandidate objects with RRF scores
+            top_k: Number of documents to assemble
+            include_code: Include the source code (always True for Whoosh)
+            include_cpg: Include CPG data (always True for Whoosh)
             
         Returns:
-            Liste des documents enrichis triés par score final
+            List of EnrichedDocument objects sorted by final score
         """
+        if not candidates:
+            logger.warning("No candidates provided for assembly")
+            return []
+        
+        # Extraire les clés des candidats
+        candidate_keys = [candidate.key for candidate in candidates[:top_k]]
+        
+        # Récupérer les documents depuis Whoosh en batch
+        whoosh_docs = self._batch_retrieve_from_whoosh(candidate_keys)
+        
+        # Assembler les documents enrichis
         enriched_docs = []
+        assembly_errors = 0
         
         for candidate in candidates[:top_k]:
             try:
-                doc = self._assemble_single_document(candidate)
-                if doc:
-                    enriched_docs.append(doc)
+                whoosh_doc = whoosh_docs.get(candidate.key)
+                if whoosh_doc:
+                    doc = self._assemble_from_whoosh_doc(candidate, whoosh_doc)
+                    if doc:
+                        enriched_docs.append(doc)
+                        self._stats["documents_assembled"] += 1
+                    else:
+                        assembly_errors += 1
+                else:
+                    logger.warning(f"Document {candidate.key} non trouvé dans index Whoosh")
+                    assembly_errors += 1
+                    
             except Exception as e:
                 logger.warning(f"Erreur assemblage {candidate.key}: {e}")
+                assembly_errors += 1
                 continue
-                
-        logger.info(f"Documents assemblés: {len(enriched_docs)}/{top_k}")
+        
+        self._stats["assembly_errors"] += assembly_errors
+        
+        if assembly_errors > 0:
+            logger.warning(f"{assembly_errors} erreurs d'assemblage sur {len(candidates[:top_k])}")
+        
+        logger.info(f"Documents assemblés: {len(enriched_docs)}/{top_k} depuis index Whoosh")
         return enriched_docs
     
-    def _assemble_single_document(self, candidate: FusionCandidate) -> Optional[EnrichedDocument]:
-        """Assemble un document unique depuis les 3 sources"""
-        key = candidate.key
+    def _batch_retrieve_from_whoosh(self, keys: List[str]) -> Dict[str, Dict]:
+        """Retrieve multiple documents from Whoosh in a single query"""
+        if not keys:
+            return {}
         
-        # Récupérer depuis KB1 (source principale)
-        kb1_entry = self.kb1_data.get(key)
-        if not kb1_entry:
-            logger.warning(f"Clé {key} introuvable dans KB1")
-            return None
+        try:
+            with self.index.searcher() as searcher:
+                # Construire requête OR pour toutes les clés
+                key_terms = [Term("key", key) for key in keys]
+                query = Or(key_terms)
+                
+                # Exécuter la requête
+                results = searcher.search(query, limit=len(keys))
+                
+                # Construire le dictionnaire de résultats
+                docs = {}
+                for hit in results:
+                    key = hit["key"]
+                    # Convert hit Whoosh to dictionary
+                    doc_data = dict(hit)
+                    docs[key] = doc_data
+                
+                logger.debug(f"Retrieved {len(docs)}/{len(keys)} documents from Whoosh")
+                return docs
+                
+        except Exception as e:
+            logger.error(f"Error during Whoosh batch retrieval: {e}")
+            return {}
+    
+    def _assemble_from_whoosh_doc(self, candidate, whoosh_doc: Dict) -> Optional[EnrichedDocument]:
+        """Assemble an EnrichedDocument from a Whoosh document"""
+        try:
+            # Extraction des champs avec valeurs par défaut sécurisées
+            doc_data = {
+                # Identifiers
+                "key": candidate.key,
+                "final_score": candidate.final_score,
+                "cve_id": whoosh_doc.get("cve_id", ""),
+                "cwe": whoosh_doc.get("cwe", ""),
+                
+                # Textual fields from KB1
+                "gpt_purpose": whoosh_doc.get("gpt_purpose", ""),
+                "gpt_function": whoosh_doc.get("gpt_function", ""),
+                "gpt_analysis": whoosh_doc.get("gpt_analysis", ""),
+                "solution": whoosh_doc.get("solution", ""),
+                
+                # Source code KB1
+                "code_before_change": whoosh_doc.get("code_before_change", ""),
+                "code_after_change": whoosh_doc.get("code_after_change", ""),
+                
+                # CPG analysis KB1  
+                "cpg_vulnerability_pattern": whoosh_doc.get("cpg_vulnerability_pattern", ""),
+                "patch_transformation_analysis": whoosh_doc.get("patch_transformation_analysis", ""),
+                "detection_cpg_signature": whoosh_doc.get("detection_cpg_signature", ""),
+                "remediation_graph_guidance": whoosh_doc.get("remediation_graph_guidance", ""),
+                
+                # CPG data from KB2 (stored in Whoosh)
+                "embedding_text": whoosh_doc.get("embedding_text", ""),
+                "dangerous_functions_count": int(whoosh_doc.get("dangerous_functions_count", 0)),
+                "dangerous_functions_detected": bool(whoosh_doc.get("dangerous_functions_detected", False)),
+                "risk_class": whoosh_doc.get("risk_class", "unknown"),
+                "complexity_class": whoosh_doc.get("complexity_class", "unknown"),
+                
+                # Analyse patch from KB2
+                "net_dangerous_change": int(whoosh_doc.get("net_dangerous_change", 0)),
+                
+                # Calculated metadata
+                "code_lines_count": int(whoosh_doc.get("code_lines_count", 0)),
+                "has_code_before": bool(whoosh_doc.get("has_code_before", False)),
+                "has_code_after": bool(whoosh_doc.get("has_code_after", False)),
+            }
             
-        # Récupérer métadonnées KB2 et KB3
-        kb2_meta = self.kb2_lookup.get(key, {})
-        kb3_meta = self.kb3_lookup.get(key, {})
-        
-        # Extraction sécurisée des champs
-        gpt_purpose = kb1_entry.get("GPT_purpose", "")
-        gpt_function = kb1_entry.get("GPT_function", "")
-        
-        # Code avant/après
-        code_before = kb1_entry.get("code_before_change", "")
-        code_after = kb1_entry.get("code_after_change", "")
-        
-        # CVE ID
-        cve_id = kb1_entry.get("CVE_id", kb1_entry.get("cve_id", ""))
-        
-        # Embedding text depuis KB2
-        embedding_text = kb2_meta.get("embedding_text", "")
-        
-        # Fonctions dangereuses depuis KB2 (si disponible)
-        dangerous_functions = kb2_meta.get("dangerous_functions", [])
-        if isinstance(dangerous_functions, str):
-            dangerous_functions = [dangerous_functions]
-            
-        # CWE depuis la clé
-        cwe = key.split("_")[0] if "_" in key else ""
-        
-        # Construire le document enrichi
-        doc = EnrichedDocument(
-            key=key,
-            final_score=candidate.final_score,
-            
-            # Contenu KB1 (descriptif neutre)
-            gpt_purpose=gpt_purpose,
-            gpt_function=gpt_function,
-            code_before_change=code_before,
-            code_after_change=code_after,
-            cve_id=cve_id,
-            
-            # Contenu KB2 (structure)
-            embedding_text=embedding_text,
-            dangerous_functions=dangerous_functions,
-            
-            # Métadonnées
-            cwe=cwe,
+            # Parsing JSON fields stored in Whoosh
+            doc_data["dangerous_functions"] = self._parse_json_field(
+                whoosh_doc.get("dangerous_functions", ""), default=[]
+            )
+            doc_data["dangerous_functions_added"] = self._parse_json_field(
+                whoosh_doc.get("dangerous_functions_added", ""), default=[]
+            )
+            doc_data["dangerous_functions_removed"] = self._parse_json_field(
+                whoosh_doc.get("dangerous_functions_removed", ""), default=[]
+            )
+            doc_data["vulnerability_behavior"] = self._parse_json_field(
+                whoosh_doc.get("vulnerability_behavior", ""), default={}
+            )
+            doc_data["modified_lines"] = self._parse_json_field(
+                whoosh_doc.get("modified_lines", ""), default={}
+            )
             
             # Provenance pour debugging
-            provenance={
-                "kb1_rank": candidate.kb1_rank,
-                "kb2_rank": candidate.kb2_rank, 
-                "kb3_rank": candidate.kb3_rank,
-                "kb1_score": candidate.kb1_score,
-                "kb2_score": candidate.kb2_score,
-                "kb3_score": candidate.kb3_score,
-                "search_time_ms": candidate.search_time_ms,
-                "total_sources": candidate.total_sources
+            doc_data["provenance"] = {
+                "kb1_rank": getattr(candidate, 'kb1_rank', None),
+                "kb2_rank": getattr(candidate, 'kb2_rank', None), 
+                "kb3_rank": getattr(candidate, 'kb3_rank', None),
+                "kb1_score": getattr(candidate, 'kb1_score', None),
+                "kb2_score": getattr(candidate, 'kb2_score', None),
+                "kb3_score": getattr(candidate, 'kb3_score', None),
+                "search_time_ms": getattr(candidate, 'search_time_ms', 0.0),
+                "total_sources": getattr(candidate, 'total_sources', 0),
+                "source": "whoosh_enriched_index"
             }
-        )
-        
-        return doc
-
-class ContextBuilder:
-    """Construit le contexte structuré pour le LLM"""
+            
+            # Create the enriched document
+            doc = EnrichedDocument(**doc_data)
+            return doc
+            
+        except Exception as e:
+            logger.error(f"Error assembling document {candidate.key}: {e}")
+            return None
     
-    @staticmethod
-    def build_detection_context(original_code: str, 
-                              enriched_docs: List[EnrichedDocument],
-                              max_context_length: int = 4000) -> str:
-        """
-        Construit un prompt structuré pour la détection de vulnérabilité
+    def _parse_json_field(self, json_str: str, default=None):
+        """Parse a JSON string field into a Python object"""
+        if not json_str or json_str == "":
+            return default if default is not None else {}
         
-        Args:
-            original_code: Code source à analyser
-            enriched_docs: Documents similaires trouvés
-            max_context_length: Limite de contexte en caractères
-            
-        Returns:
-            Prompt Markdown structuré pour le LLM
-        """
-        context_parts = []
-        
-        # En-tête avec le code à analyser
-        context_parts.append("# Analyse de Vulnérabilité C/C++")
-        context_parts.append("\n## Code Source à Analyser")
-        context_parts.append("```c")
-        context_parts.append(original_code.strip())
-        context_parts.append("```\n")
-        
-        # Contexte des documents similaires
-        if enriched_docs:
-            context_parts.append("## Exemples Similaires Détectés")
-            
-            for i, doc in enumerate(enriched_docs[:3], 1):  # Top 3 seulement
-                context_parts.append(f"\n### Exemple {i} (Score: {doc.final_score:.3f}, CWE: {doc.cwe})")
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            logger.debug(f"Error parsing JSON: {json_str[:50]}...")
+            return default if default is not None else {}
+        except Exception as e:
+            logger.debug(f"Error parsing JSON: {e}")
+            return default if default is not None else {}
+    
+    def get_document_by_key(self, key: str) -> Optional[EnrichedDocument]:
+        """Retrieve a single document by its key"""
+        try:
+            with self.index.searcher() as searcher:
+                query = Term("key", key)
+                results = searcher.search(query, limit=1)
                 
-                if doc.gpt_purpose:
-                    context_parts.append(f"**Objectif**: {doc.gpt_purpose}")
+                if results:
+                    # Create a fake candidate for assembly
+                    from dataclasses import dataclass
                     
-                if doc.gpt_function:
-                    context_parts.append(f"**Fonction**: {doc.gpt_function}")
+                    @dataclass
+                    class MockCandidate:
+                        key: str
+                        final_score: float = 1.0
+                        kb1_rank: int = 1
+                        kb2_rank: Optional[int] = None
+                        kb3_rank: Optional[int] = None
+                        kb1_score: float = 1.0
+                        kb2_score: Optional[float] = None
+                        kb3_score: Optional[float] = None
+                        search_time_ms: float = 0.0
+                        total_sources: int = 1
                     
-                if doc.embedding_text:
-                    # Tronquer le texte d'embedding
-                    embedding_preview = doc.embedding_text[:200]
-                    if len(doc.embedding_text) > 200:
-                        embedding_preview += "..."
-                    context_parts.append(f"**Structure**: {embedding_preview}")
+                    mock_candidate = MockCandidate(key=key)
+                    doc_data = dict(results[0])
                     
-                if doc.dangerous_functions:
-                    funcs_str = ", ".join(doc.dangerous_functions[:5])
-                    context_parts.append(f"**Fonctions dangereuses**: {funcs_str}")
+                    return self._assemble_from_whoosh_doc(mock_candidate, doc_data)
+                else:
+                    logger.warning(f"Document {key} not found in index")
+                    return None
                     
-                # Code similaire (tronqué)
-                if doc.code_before_change:
-                    context_parts.append("**Code similaire vulnérable**:")
-                    context_parts.append("```c")
-                    code_preview = doc.code_before_change[:300]
-                    if len(doc.code_before_change) > 300:
-                        code_preview += "\n// ..."
-                    context_parts.append(code_preview)
-                    context_parts.append("```")
-        else:
-            context_parts.append("## Aucun Exemple Similaire Trouvé")
-            context_parts.append("Analysez le code de manière autonome.")
-        
-        # Instructions pour le LLM
-        context_parts.append("\n## Instructions")
-        context_parts.append("Analysez le code source et déterminez s'il contient une vulnérabilité.")
-        context_parts.append("Basez-vous sur les exemples similaires si disponibles.")
-        context_parts.append("Répondez au format JSON uniquement:")
-        context_parts.append('```json')
-        context_parts.append('{')
-        context_parts.append('  "is_vulnerable": true/false,')
-        context_parts.append('  "confidence": 0.0-1.0,')
-        context_parts.append('  "cwe": "CWE-XXX",')
-        context_parts.append('  "explanation": "Description détaillée de la vulnérabilité"')
-        context_parts.append('}')
-        context_parts.append('```')
-        
-        full_context = "\n".join(context_parts)
-        
-        # Tronquer si trop long
-        if len(full_context) > max_context_length:
-            logger.warning(f"Contexte tronqué: {len(full_context)} -> {max_context_length} chars")
-            full_context = full_context[:max_context_length] + "\n\n[...contexte tronqué...]"
-            
-        return full_context
+        except Exception as e:
+            logger.error(f"Error retrieving document {key}: {e}")
+            return None
     
-    @staticmethod
-    def build_patch_context(original_code: str,
-                           detection_result: Dict,
-                           enriched_docs: List[EnrichedDocument],
-                           max_context_length: int = 5000) -> str:
-        """Construit le contexte pour la génération de patch"""
-        context_parts = []
-        
-        context_parts.append("# Génération de Correctif C/C++")
-        context_parts.append(f"\n## Vulnérabilité Détectée")
-        context_parts.append(f"**Type**: {detection_result.get('cwe', 'Unknown')}")
-        context_parts.append(f"**Confiance**: {detection_result.get('confidence', 0):.2f}")
-        context_parts.append(f"**Explication**: {detection_result.get('explanation', '')}")
-        
-        context_parts.append("\n## Code Vulnérable")
-        context_parts.append("```c")
-        context_parts.append(original_code.strip())
-        context_parts.append("```")
-        
-        # Exemples de correctifs
-        if enriched_docs:
-            context_parts.append("\n## Exemples de Correctifs")
-            patch_count = 0
-            for i, doc in enumerate(enriched_docs[:3], 1):
-                if doc.code_after_change and patch_count < 2:  # Max 2 exemples
-                    patch_count += 1
-                    context_parts.append(f"\n### Correctif Exemple {patch_count}")
-                    context_parts.append("```c")
-                    code_patch = doc.code_after_change[:500]
-                    if len(doc.code_after_change) > 500:
-                        code_patch += "\n// ..."
-                    context_parts.append(code_patch)
-                    context_parts.append("```")
-        
-        context_parts.append("\n## Instructions")
-        context_parts.append("Générez un correctif sécurisé pour le code vulnérable.")
-        context_parts.append("Inspirez-vous des exemples de correctifs fournis.")
-        context_parts.append("Répondez uniquement avec le code corrigé complet, sans explication supplémentaire.")
-        
-        full_context = "\n".join(context_parts)
-        
-        # Tronquer si nécessaire
-        if len(full_context) > max_context_length:
-            logger.warning(f"Contexte patch tronqué: {len(full_context)} -> {max_context_length}")
-            full_context = full_context[:max_context_length] + "\n// [contexte tronqué...]"
-            
-        return full_context
-
-# Test/Debug functions
-def test_document_assembler():
-    """Test de l'assembleur de documents"""
-    from .fusion_controller import FusionCandidate
-    
-    # Simuler des candidats RRF
-    candidates = [
-        FusionCandidate(
-            key="CWE-119_CVE-2016-1234_1",
-            final_score=0.85,
-            kb1_rank=1, kb2_rank=2, kb3_rank=1,
-            kb1_score=0.9, kb2_score=0.8, kb3_score=0.85
-        ),
-        FusionCandidate(
-            key="CWE-119_CVE-2017-5678_2", 
-            final_score=0.72,
-            kb1_rank=3, kb2_rank=1, kb3_rank=5,
-            kb1_score=0.7, kb2_score=0.9, kb3_score=0.6
-        )
-    ]
-    
-    assembler = DocumentAssembler()
-    enriched_docs = assembler.assemble_documents(candidates)
-    
-    print(f"Documents assemblés: {len(enriched_docs)}")
-    for doc in enriched_docs:
-        print(f"- {doc.key}: score={doc.final_score:.3f}, CWE={doc.cwe}")
-        print(f"  Purpose: {doc.gpt_purpose[:100]}...")
-        print(f"  Provenance: KB1({doc.provenance['kb1_rank']}), KB2({doc.provenance['kb2_rank']}), KB3({doc.provenance['kb3_rank']})")
-    
-    # Test contexte
-    original_code = """
-char buffer[10];
-strcpy(buffer, user_input);  // Vulnérabilité potentielle
-printf("Data: %s", buffer);
-"""
-    
-    context = ContextBuilder.build_detection_context(original_code, enriched_docs)
-    print("\n" + "="*60)
-    print("CONTEXTE DE DÉTECTION GÉNÉRÉ:")
-    print("="*60)
-    print(context[:1200] + "..." if len(context) > 1200 else context)
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    test_document_assembler()
+    def get_stats(self) -> Dict[str, Any]:
+        """Return assembly statistics"""
+        return self._stats.copy()

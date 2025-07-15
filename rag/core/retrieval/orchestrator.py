@@ -1,7 +1,13 @@
-# core/retrieval/orchestrator.py
+
 """
-Orchestrateur principal pour le système de récupération VulRAG
-Coordonne le preprocessing -> recherche hybride -> fusion RRF -> assemblage contexte
+Vuln_RAG Retrieval Orchestrator
+
+High-level coordinator that turns a pre-processed query into a complete Large-Language-Model context. Pipeline:
+1. Pre-processing (performed upstream)
+2. Hybrid search on the three knowledge bases (KB1 Whoosh, KB2 FAISS CPG, KB3 FAISS Code)
+3. Reciprocal-Rank-Fusion (RRF)
+4. Document assembly and enrichment
+5. Structured context construction for vulnerability detection and (optionally) patch generation
 """
 
 import logging
@@ -10,91 +16,92 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 
-from .fusion_controller import VulRAGRetrievalController, FusionCandidate, create_default_controller
-from .document_assembler import DocumentAssembler, ContextBuilder, EnrichedDocument
+from .fusion_controller import Vuln_RAGRetrievalController, FusionCandidate, create_default_controller
+from .document_assembler import DocumentAssembler, EnrichedDocument
+from ..generation.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class RetrievalResult:
-    """Résultat complet d'une recherche VulRAG"""
+    """Complete result of a Vuln_RAG retrieval run"""
     # Input
     original_code: str
     query_data: Dict[str, Any]
     
-    # Résultats fusion
+    # Fusion results
     fusion_candidates: List[FusionCandidate]
     enriched_documents: List[EnrichedDocument]
     
-    # Contexte LLM
+    # LLM context
     detection_context: str
     patch_context: Optional[str] = None
     
-    # Métadonnées performance
+    # Performance metadata
     total_time_ms: float = 0.0
     search_time_ms: float = 0.0
     assembly_time_ms: float = 0.0
     context_time_ms: float = 0.0
     
-    # Statistiques
+    # Statistics
     stats: Dict[str, Any] = None
 
-class VulRAGRetrievalOrchestrator:
+class Vuln_RAGRetrievalOrchestrator:
     """
-    Orchestrateur principal pour la récupération VulRAG
+    Main orchestrator for Vuln_RAG retrieval
     
-    Pipeline complet:
-    1. Preprocessing du code → query_data
-    2. Recherche hybride (KB1 + KB2 + KB3)  
-    3. Fusion RRF
-    4. Assemblage des documents
-    5. Construction du contexte LLM
+    Full pipeline:
+    1. Code pre-processing → query_data
+    2. Hybrid search (KB1 + KB2 + KB3)
+    3. RRF fusion
+    4. Document assembly
+    5. LLM context construction
     """
     
     def __init__(self,
-                 controller: Optional[VulRAGRetrievalController] = None,
+                 controller: Optional[Vuln_RAGRetrievalController] = None,
                  assembler: Optional[DocumentAssembler] = None,
                  top_k_search: int = 10,
                  top_k_context: int = 5):
         """
         Args:
-            controller: Contrôleur de recherche (None = défaut)
-            assembler: Assembleur de documents (None = défaut)
-            top_k_search: Nombre de résultats par moteur
-            top_k_context: Nombre de documents dans le contexte final
+            controller: Search controller (None = default)
+            assembler: Document assembler (None = default)
+            top_k_search: Number of results per engine
+            top_k_context: Number of documents kept in final context
         """
         self.controller = controller or create_default_controller()
         self.assembler = assembler or DocumentAssembler()
         self.top_k_search = top_k_search
         self.top_k_context = top_k_context
         
-        logger.info("VulRAG Retrieval Orchestrator initialisé")
+        logger.info("Vuln_RAG Retrieval Orchestrator initialised")
     
     def retrieve_context(self,
                         original_code: str,
                         query_data: Dict[str, Any],
                         include_patch_context: bool = False) -> RetrievalResult:
         """
-        Pipeline complet de récupération contextuelle
+        Full contextual retrieval pipeline
         
         Args:
-            original_code: Code source vulnérable à analyser
-            query_data: Données de requête préprocessées {
+            original_code: Source code to analyse
+            query_data: Pre-processed query data {
                 "kb1_purpose": str,
                 "kb1_function": str, 
                 "kb2_vector": List[float],
                 "kb3_code": str
             }
-            include_patch_context: Générer aussi le contexte pour patch
+            include_patch_context: Also generate patch context
             
         Returns:
-            RetrievalResult avec contexte complet pour LLM
+            RetrievalResult with full LLM context
         """
         start_time = time.time()
         
-        logger.info(f"Début récupération contextuelle pour {len(original_code)} chars de code")
+        logger.info(f"Starting contextual retrieval for {len(original_code)} characters of code")
         
-        # 1. Recherche hybride + Fusion RRF
+        # 1. Hybrid search + RRF fusion
         search_start = time.time()
         fusion_candidates = self.controller.search_from_preprocessed_query(
             query_data=query_data,
@@ -102,9 +109,9 @@ class VulRAGRetrievalOrchestrator:
         )
         search_time_ms = (time.time() - search_start) * 1000
         
-        logger.info(f"Fusion RRF: {len(fusion_candidates)} candidats en {search_time_ms:.1f}ms")
+        logger.info(f"RRF fusion produced {len(fusion_candidates)} candidates in {search_time_ms:.1f} ms")
         
-        # 2. Assemblage des documents
+        # 2. Document assembly
         assembly_start = time.time()
         enriched_documents = self.assembler.assemble_documents(
             candidates=fusion_candidates,
@@ -112,9 +119,9 @@ class VulRAGRetrievalOrchestrator:
         )
         assembly_time_ms = (time.time() - assembly_start) * 1000
         
-        logger.info(f"Assemblage: {len(enriched_documents)} documents en {assembly_time_ms:.1f}ms")
+        logger.info(f"Assembly: {len(enriched_documents)} documents enriched in {assembly_time_ms:.1f} ms")
         
-        # 3. Construction du contexte de détection
+        # 3. Detection context construction
         context_start = time.time()
         detection_context = ContextBuilder.build_detection_context(
             original_code=original_code,
@@ -125,12 +132,12 @@ class VulRAGRetrievalOrchestrator:
         # 4. Construction du contexte de patch (optionnel)
         patch_context = None
         if include_patch_context:
-            # Simuler résultat de détection pour le contexte patch
+            # Simulate detection result to build patch context
             dummy_detection = {
                 "is_vulnerable": True,
                 "confidence": 0.8,
                 "cwe": enriched_documents[0].cwe if enriched_documents else "CWE-Unknown",
-                "explanation": "Vulnérabilité détectée par système RAG"
+                "explanation": "Vulnerability detected by RAG system"
             }
             patch_context = ContextBuilder.build_patch_context(
                 original_code=original_code,
@@ -158,26 +165,26 @@ class VulRAGRetrievalOrchestrator:
             stats=stats
         )
         
-        logger.info(f"Récupération terminée en {total_time_ms:.1f}ms")
-        logger.info(f"Contexte détection: {len(detection_context)} chars")
+        logger.info(f"Retrieval completed in {total_time_ms:.1f} ms")
+        logger.info(f"Detection context length: {len(detection_context)} characters")
         if patch_context:
-            logger.info(f"Contexte patch: {len(patch_context)} chars")
+            logger.info(f"Patch context length: {len(patch_context)} characters")
             
         return result
     
     def _compute_stats(self, 
                       candidates: List[FusionCandidate], 
                       documents: List[EnrichedDocument]) -> Dict[str, Any]:
-        """Calcule les statistiques de la recherche"""
+        """Compute retrieval statistics"""
         if not candidates:
             return {"candidates": 0, "documents": 0, "coverage": {}}
             
-        # Distribution des sources
+        # Source distribution
         kb1_count = sum(1 for c in candidates if c.kb1_rank is not None)
         kb2_count = sum(1 for c in candidates if c.kb2_rank is not None) 
         kb3_count = sum(1 for c in candidates if c.kb3_rank is not None)
         
-        # Distribution CWE
+        # CWE distribution
         cwe_distribution = {}
         for doc in documents:
             cwe = doc.cwe or "Unknown"
@@ -207,17 +214,17 @@ class VulRAGRetrievalOrchestrator:
                     purpose: str = "",
                     function: str = "") -> RetrievalResult:
         """
-        Recherche rapide avec paramètres simplifiés
+        Quick search with simplified parameters
         
         Args:
-            code: Code source à analyser
-            purpose: Description de l'objectif (optionnel)
-            function: Description de la fonction (optionnel)
+            code: Source code to analyse
+            purpose: Purpose description (optional)
+            function: Function description (optional)
             
         Returns:
-            RetrievalResult avec contexte de détection
+            RetrievalResult with detection context
         """
-        # Construction query simplifiée
+        # Build simplified query
         query_data = {
             "kb1_purpose": purpose,
             "kb1_function": function,
@@ -232,13 +239,13 @@ class VulRAGRetrievalOrchestrator:
         )
 
 class RetrievalResultAnalyzer:
-    """Analyseur pour les résultats de recherche VulRAG"""
+    """Analyzer for Vuln_RAG retrieval results"""
     
     @staticmethod
     def print_summary(result: RetrievalResult, detailed: bool = False):
-        """Affiche un résumé du résultat de recherche"""
+        """Print a summary of the retrieval result"""
         print("=" * 60)
-        print("VulRAG RETRIEVAL SUMMARY")
+        print("Vuln_RAG RETRIEVAL SUMMARY")
         print("=" * 60)
         
         # Timing
@@ -247,7 +254,7 @@ class RetrievalResultAnalyzer:
         print(f"   ├─ Assembly: {result.assembly_time_ms:.1f}ms")
         print(f"   └─ Context: {result.context_time_ms:.1f}ms")
         
-        # Résultats
+        # Results
         stats = result.stats or {}
         print(f"\n📊 Results:")
         print(f"   ├─ Fusion Candidates: {stats.get('candidates', 0)}")
@@ -276,7 +283,7 @@ class RetrievalResultAnalyzer:
             for cwe, count in sorted(cwe_dist.items()):
                 print(f"   ├─ {cwe}: {count}")
         
-        # Détails si demandé
+        # Details if requested
         if detailed and result.enriched_documents:
             print(f"\n📋 Document Details:")
             for i, doc in enumerate(result.enriched_documents[:3], 1):
@@ -290,54 +297,18 @@ class RetrievalResultAnalyzer:
     
     @staticmethod
     def export_context(result: RetrievalResult, output_path: str):
-        """Exporte le contexte vers un fichier"""
+        """Export the context to a file"""
         output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
         with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("# VulRAG Detection Context\n\n")
+            f.write("# Vuln_RAG Detection Context\n\n")
             f.write(result.detection_context)
             
             if result.patch_context:
                 f.write("\n\n" + "="*60 + "\n")
-                f.write("# VulRAG Patch Context\n\n")
+                f.write("# Vuln_RAG Patch Context\n\n")
                 f.write(result.patch_context)
                 
-        logger.info(f"Contexte exporté vers {output_file}")
-
-# Tests et exemples
-def test_orchestrator():
-    """Test complet de l'orchestrateur"""
-    orchestrator = VulRAGRetrievalOrchestrator()
-    
-    # Code de test
-    test_code = """
-#include <stdio.h>
-#include <string.h>
-
-int main(int argc, char *argv[]) {
-    char buffer[10];
-    strcpy(buffer, argv[1]);  // Vulnérabilité buffer overflow
-    printf("Input: %s\\n", buffer);
-    return 0;
-}
-"""
-    
-    # Test recherche rapide
-    result = orchestrator.quick_search(
-        code=test_code,
-        purpose="copy user input to buffer",
-        function="string manipulation without bounds checking"
-    )
-    
-    # Analyse des résultats
-    RetrievalResultAnalyzer.print_summary(result, detailed=True)
-    
-    # Export optionnel
-    # RetrievalResultAnalyzer.export_context(result, "output/test_context.md")
-    
-    return result
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    test_orchestrator()
+        logger.info(f"Context exported to {output_file}")
+   
