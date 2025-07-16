@@ -9,7 +9,6 @@ Strategy (waterfall):
 2. If clean, run flawfinder (pattern-based) – high-risk levels (>=4) => vulnerable.
 3. If both clean, return safe.
 
-Additional tools (e.g., semgrep) can be added easily by extending _TOOLS.
 """
 
 from __future__ import annotations
@@ -80,37 +79,3 @@ class StaticAnalysisGate:
         }
 
 
-# CLI demo
-if __name__ == "__main__":
-    import argparse, sys
-
-    logging.basicConfig(level=logging.INFO)
-
-    parser = argparse.ArgumentParser(description="Run Static Analysis Gate on a source file")
-    parser.add_argument("source", help="Path to C/C++ source file (or - for stdin)")
-    args = parser.parse_args()
-
-    if args.source == "-":
-        code_text = sys.stdin.read()
-    else:
-        with open(args.source, "r", encoding="utf-8") as f:
-            code_text = f.read()
-
-    gate = StaticAnalysisGate()
-    result = gate.analyze(code_text)
-
-    print("\n=== Static Analysis Gate Result ===")
-    print(f"Verdict: {result['security_assessment']}")
-    print(result["message"])
-
-    if result["cppcheck_issues"]:
-        print(f"\nCppcheck issues ({len(result['cppcheck_issues'])}):")
-        for iss in result["cppcheck_issues"]:
-            print(f"  {iss['severity'].upper()}: {iss['id']} – {iss['msg']} (line {iss['line']})")
-
-    if result["flawfinder_issues"]:
-        print(f"\nFlawfinder issues ({len(result['flawfinder_issues'])}):")
-        for iss in result["flawfinder_issues"]:
-            print(f"  LEVEL {iss['level']}: {iss['function']} – {iss['warning']}")
-
-    print("\n====================================")

@@ -1,7 +1,7 @@
-"""Context Builder for VulRAG (moved from retrieval)
+"""Context Builder for Vuln_RAG 
 
 Generates structured prompts (detection / patch) from the original code and a
-list of `EnrichedDocument` objects returned by the `DocumentAssembler`.
+list of `EnrichedDocument` objects returned by the `retrieval.DocumentAssembler`.
 """
 from __future__ import annotations
 

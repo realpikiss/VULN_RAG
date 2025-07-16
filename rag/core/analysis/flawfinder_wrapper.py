@@ -18,7 +18,7 @@ def scan_code(code: str, timeout: int = 10) -> List[Dict]:
         src_path.write_text(enhanced_code, encoding="utf-8")
         
         try:
-            # Flawfinder avec --dataonly pour format simple
+            # Flawfinder with --dataonly for simple format
             result = subprocess.run([
                 "flawfinder", 
                 "--dataonly", 
