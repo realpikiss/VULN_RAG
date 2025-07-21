@@ -25,7 +25,7 @@ class ContextBuilder:
         """Return a Markdown prompt guiding the LLM to detect vulnerabilities."""
         context_parts: List[str] = []
         context_parts.append("# C/C++ Vulnerability Analysis")
-        context_parts.append("\n## Source Code to Analyse")
+        context_parts.append("\n## Source Code to Analyze")
         context_parts.append("```c")
         context_parts.append(original_code.strip())
         context_parts.append("```\n")
@@ -65,26 +65,21 @@ class ContextBuilder:
                     context_parts.append(f"**Vulnerability pattern**: {pat}")
         else:
             context_parts.append("## No Similar Examples Found")
-            context_parts.append("Analyse the code autonomously.")
+            context_parts.append("Analyze the code autonomously.")
 
         context_parts.append("\n## Instructions")
         context_parts.append(
-            "Analyse the source code and determine whether it contains a vulnerability."
+            "Analyze the source code and determine whether it contains a vulnerability."
         )
         context_parts.append(
             "Base your reasoning on the similar examples if available. Respond using *only* the following JSON format:"
         )
         context_parts.append("```json")
-        context_parts.append("{\n  \"is_vulnerable\": true/false,\n  \"confidence\": 0.0-1.0,\n  \"cwe\": \"CWE-XXX\",\n  \"explanation\": \"Detailed explanation of the vulnerability\"\n}")
+        context_parts.append("{\n  \"verdict\": \"VULNERABLE\"|\"SAFE\"|\"NEED MORE CONTEXT\",\n  \"confidence\": 0.0-1.0,\n  \"cwe\": \"CWE-XXX\",\n  \"explanation\": \"Detailed explanation of the vulnerability\"\n}")
         context_parts.append("```")
+        context_parts.append("\n**IMPORTANT**: Respond with ONLY the JSON object, no additional text or commentary.")
 
-        full_context = "\n".join(context_parts)
-        if len(full_context) > max_context_length:
-            logger.warning(
-                "Detection context truncated: %d -> %d chars", len(full_context), max_context_length
-            )
-            full_context = full_context[:max_context_length] + "\n\n[...context truncated...]"
-        return full_context
+        return "\n".join(context_parts)
 
     @staticmethod
     def build_patch_context(
@@ -128,10 +123,4 @@ class ContextBuilder:
         context_parts.append("Generate a secure patch for the vulnerable code above.")
         context_parts.append("Respond **only** with the complete corrected code, no additional commentary.")
 
-        full_context = "\n".join(context_parts)
-        if len(full_context) > max_context_length:
-            logger.warning(
-                "Patch context truncated: %d -> %d chars", len(full_context), max_context_length
-            )
-            full_context = full_context[:max_context_length] + "\n// [context truncated...]"
-        return full_context
+        return "\n".join(context_parts)

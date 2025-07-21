@@ -46,20 +46,20 @@ class KB3CodeFaissSearcher:
 
     def _load_index(self):
         if not os.path.exists(self.index_path):
-            raise FileNotFoundError(f"Index FAISS introuvable: {self.index_path}")
+            raise FileNotFoundError(f"FAISS index not found: {self.index_path}")
         self.index = faiss.read_index(self.index_path)
-        logger.info(f"📦 Index FAISS chargé: {self.index_path}")
+        logger.info(f"📦 FAISS index loaded: {self.index_path}")
 
     def _load_metadata(self):
         if not os.path.exists(self.metadata_path):
-            raise FileNotFoundError(f"Fichier metadata introuvable: {self.metadata_path}")
+            raise FileNotFoundError(f"Metadata file not found: {self.metadata_path}")
         with open(self.metadata_path, 'r', encoding='utf-8') as f:
             self.metadata = json.load(f)
-        logger.info(f"📁 {len(self.metadata)} métadonnées chargées")
+        logger.info(f"📁 {len(self.metadata)} metadata loaded")
 
     def _load_model(self):
         self.model = SentenceTransformer(self.model_name)
-        logger.info(f"🧠 Modèle d'encodage chargé: {self.model_name}")
+        logger.info(f"🧠 Encoding model loaded: {self.model_name}")
 
     def encode_code(self, code_text: str) -> np.ndarray:
         vec = self.model.encode([code_text])
@@ -94,14 +94,14 @@ class KB3CodeFaissSearcher:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Recherche FAISS sur code brut KB3")
-    parser.add_argument("--codefile", type=str, help="Fichier contenant le code source")
-    parser.add_argument("--topk", type=int, default=3, help="Nombre de résultats à retourner")
-    parser.add_argument("--verbose", action="store_true", help="Afficher les résultats")
+    parser = argparse.ArgumentParser(description="FAISS search on raw code KB3")
+    parser.add_argument("--codefile", type=str, help="File containing source code")
+    parser.add_argument("--topk", type=int, default=3, help="Number of results to return")
+    parser.add_argument("--verbose", action="store_true", help="Display results")
     args = parser.parse_args()
 
     if not args.codefile or not os.path.exists(args.codefile):
-        raise FileNotFoundError("Fichier de code non trouvé")
+        raise FileNotFoundError("Code file not found")
 
     with open(args.codefile, "r", encoding="utf-8") as f:
         code_input = f.read()
@@ -111,4 +111,4 @@ if __name__ == "__main__":
 
     with open("kb3_code_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"✅ Résultats sauvegardés dans 'kb3_code_results.json'")
+        print(f"✅ Results saved in 'kb3_code_results.json'")

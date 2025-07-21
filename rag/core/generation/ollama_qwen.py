@@ -1,4 +1,4 @@
-"""Ollama wrapper for running Qwen-chat locally."""
+"""Ollama wrapper for running chat locally."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ SYSTEM_PROMPT = "You are a C/C++ security expert able to detect vulnerabilities 
 
 
 def to_messages(context: str) -> List[Dict[str, str]]:
-    """Wrap the given context into Qwen-chat style message list."""
+    """Wrap the given context into chat style message list."""
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": context},
@@ -24,44 +24,32 @@ def to_messages(context: str) -> List[Dict[str, str]]:
 
 
 def generate(
-    context: str,
-    *,
-    model: str = "qwen:7b-chat",
-    temperature: float = 0.2,
-    max_tokens: Optional[int] = None,
-    **options: Any,
+    prompt: str,
+    model: str = "kirito1/qwen3-coder:latest",
+    temperature: float = 0.1,
+    max_tokens: int = 500,
+    **options,
 ) -> str:
-    """Run the Qwen model via Ollama and return the assistant text.
-
-    Parameters
-    ----------
-    context: str
-        The prompt/context for the model (already structured).
-    model: str, default ``"qwen:7b-chat"``
-        Name of the Ollama model to use.
-    temperature: float
-        Sampling temperature.
-    max_tokens: int | None
-        Maximum tokens to generate (`num_predict` in Ollama terminology).
-    options: Any
-        Additional Ollama generation options (see `ollama.chat`).
-    """
-    messages = to_messages(context)
-
-    # Map our high-level kwargs to Ollama options dict
-    ollama_opts: Dict[str, Any] = {
+    """Generate text using Ollama Qwen model."""
+    
+    # Prepare Ollama options
+    ollama_opts = {
         "temperature": temperature,
+        "num_predict": max_tokens,
+        "top_p": 0.9,
+        "top_k": 40,
     }
-    if max_tokens is not None:
-        ollama_opts["num_predict"] = max_tokens
-
-    # Merge caller-provided options last so they override defaults.
     ollama_opts.update(options)
-
-    logger.debug("Sending chat completion to Ollama: model=%s, opts=%s", model, ollama_opts)
-
-    response = ollama.chat(model=model, messages=messages, options=ollama_opts)
-    content = response.get("message", {}).get("content", "")
-
-    logger.debug("Received response (%d chars)", len(content))
-    return content
+    
+    # Call Ollama
+    try:
+        response = ollama.generate(
+            model=model,
+            prompt=prompt,
+            options=ollama_opts,
+        )
+        content = response.get("response", "").strip()
+        return content
+    except Exception as e:
+        logger.error(f"Ollama generation failed: {e}")
+        return ""

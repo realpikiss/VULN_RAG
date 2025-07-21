@@ -10,8 +10,8 @@ class LLMExtractor:
         self.cache = {} # Cache pour éviter les doublons
         try:
             ollama.show(model)
-        except Exception as e:
-            print(f"Model check failed: {e}")
+        except Exception:
+            pass
 
     def extract(self, code: str) -> Tuple[str, str]:
         """
@@ -57,8 +57,8 @@ Be concise but use natural language like the examples in the database."""
         functions_text = " ".join(function_lines) if function_lines else ""
 
         purpose = purpose_match.group(1).strip() if purpose_match else ""
-        functions = functions_text.strip()
-
-        # Store in cache and return natural text (Whoosh will handle stemming during search)
-        self.cache[code_hash] = (purpose, functions)
-        return purpose, functions
+        
+        # Cache the result
+        self.cache[code_hash] = (purpose, functions_text)
+        
+        return purpose, functions_text
