@@ -1,7 +1,7 @@
 # core/retrieval/fusion_controller.py
 """
 Reciprocal Rank Fusion (RRF) Controller for Vuln_RAG -
-Combines the results of the 3 search engines: KB1 (Whoosh), KB2 (FAISS CPG), KB3 (FAISS Code)
+Combines the results of the 3 search engines: KB1 (Whoosh), KB2 (HNSW CPG), KB3 (HNSW Code)
 """
 
 import logging
@@ -22,145 +22,77 @@ class SearchResult:
     source: str  # "kb1", "kb2", "kb3"
     metadata: Dict[str, Any] = None
 
-@dataclass
-class FusionCandidate:
-    """Candidate after RRF fusion with complete provenance"""
-    key: str
-    final_score: float
-    
-    # Scores and ranks individually
-    kb1_rank: Optional[int] = None
-    kb2_rank: Optional[int] = None
-    kb3_rank: Optional[int] = None
-    kb1_score: Optional[float] = None
-    kb2_score: Optional[float] = None
-    kb3_score: Optional[float] = None
-    
-    # Performance metadata
-    search_time_ms: float = 0.0
-    total_sources: int = 0
-
 class ReciprocalRankFusion:
     """
-    Implémentation du Reciprocal Rank Fusion (RRF) pour 3 sources
-    
-    RRF Score = Σ(weight_i * 1 / (k + rank_i)) pour chaque source i
-    où k est un paramètre de lissage (typiquement 60)
+    Reciprocal Rank Fusion (RRF) algorithm
+    Combines multiple ranked lists into a single ranked list
     """
     
     def __init__(self, k: int = 60, weights: Optional[Dict[str, float]] = None):
         """
         Args:
-            k: Paramètre de lissage RRF (60 par défaut selon littérature)
-            weights: Poids optionnels par source {"kb1": 0.3, "kb2": 0.4, "kb3": 0.3}
+            k: RRF parameter (default: 60)
+            weights: Weights for each search engine
         """
         self.k = k
         self.weights = weights or {"kb1": 1.0, "kb2": 1.0, "kb3": 1.0}
         
-        # Normaliser les poids
-        total_weight = sum(self.weights.values())
-        if total_weight > 0:
-            self.weights = {k: v/total_weight for k, v in self.weights.items()}
-        
-        logger.info(f"RRF initialisé: k={k}, weights={self.weights}")
-        
-    def fuse(self, 
-             kb1_results: List[Dict], 
-             kb2_results: List[Dict], 
-             kb3_results: List[Dict]) -> List[FusionCandidate]:
+    def fuse(self, results: Dict[str, List[SearchResult]]) -> List[SearchResult]:
         """
-        Fusion RRF des résultats des 3 search engines
+        Fuse multiple ranked lists using RRF
         
         Args:
-            kb1_results: Results from Whoosh [{"key": str, "score": float}, ...]
-            kb2_results: Results from FAISS CPG [{"key": str, "score": float}, ...]  
-            kb3_results: Results from FAISS Code [{"key": str, "score": float}, ...]
+            results: Dictionary of search results by engine
             
         Returns:
-            List of FusionCandidate sorted by RRF score descending
+            Fused ranked list
         """
-        # Convertir en SearchResult avec rangs
-        search_results = []
+        # Collect all unique keys
+        all_keys = set()
+        for engine_results in results.values():
+            for result in engine_results:
+                all_keys.add(result.key)
         
-        # KB1 Results
-        for rank, result in enumerate(kb1_results, 1):
-            search_results.append(SearchResult(
-                key=str(result["key"]),  # Assurer que key est string
-                score=float(result.get("score", 0.0)),
-                rank=rank,
-                source="kb1",
-                metadata=result
-            ))
-            
-        # KB2 Results
-        for rank, result in enumerate(kb2_results, 1):
-            search_results.append(SearchResult(
-                key=str(result["key"]),
-                score=float(result.get("score", 0.0)),
-                rank=rank,
-                source="kb2",
-                metadata=result
-            ))
-            
-        # KB3 Results
-        for rank, result in enumerate(kb3_results, 1):
-            search_results.append(SearchResult(
-                key=str(result["key"]),
-                score=float(result.get("score", 0.0)),
-                rank=rank,
-                source="kb3",
-                metadata=result
-            ))
-        
-        # Grouper par clé
-        key_groups = {}
-        for result in search_results:
-            if result.key not in key_groups:
-                key_groups[result.key] = {}
-            key_groups[result.key][result.source] = result
-            
-        # Calculer scores RRF
-        fusion_candidates = []
-        
-        for key, sources in key_groups.items():
+        # Calculate RRF scores
+        rrf_scores = {}
+        for key in all_keys:
             rrf_score = 0.0
-            total_sources = len(sources)
-            
-            # Provenance data
-            kb1_rank = kb1_score = kb2_rank = kb2_score = kb3_rank = kb3_score = None
-            
-            # Weighted RRF calculation
-            for source, result in sources.items():
-                weight = self.weights.get(source, 1.0)
-                contribution = weight * (1.0 / (self.k + result.rank))
-                rrf_score += contribution
+            for engine, engine_results in results.items():
+                weight = self.weights.get(engine, 1.0)
+                # Find rank of this key in this engine's results
+                rank = None
+                for result in engine_results:
+                    if result.key == key:
+                        rank = result.rank
+                        break
                 
-                # Stocker provenance
-                if source == "kb1":
-                    kb1_rank, kb1_score = result.rank, result.score
-                elif source == "kb2":
-                    kb2_rank, kb2_score = result.rank, result.score  
-                elif source == "kb3":
-                    kb3_rank, kb3_score = result.rank, result.score
-                    
-            candidate = FusionCandidate(
+                if rank is not None:
+                    rrf_score += weight / (self.k + rank)
+            
+            rrf_scores[key] = rrf_score
+        
+        # Create fused results
+        fused_results = []
+        for key, score in sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True):
+            # Find the best metadata for this key
+            best_metadata = None
+            best_source = None
+            for engine, engine_results in results.items():
+                for result in engine_results:
+                    if result.key == key:
+                        if best_metadata is None or result.score > best_metadata.get('score', 0):
+                            best_metadata = result.metadata
+                            best_source = engine
+            
+            fused_results.append(SearchResult(
                 key=key,
-                final_score=rrf_score,
-                kb1_rank=kb1_rank, kb1_score=kb1_score,
-                kb2_rank=kb2_rank, kb2_score=kb2_score, 
-                kb3_rank=kb3_rank, kb3_score=kb3_score,
-                total_sources=total_sources
-            )
-            
-            fusion_candidates.append(candidate)
-            
-        # Sort by final score
-        fusion_candidates.sort(key=lambda x: x.final_score, reverse=True)
+                score=score,
+                rank=len(fused_results) + 1,
+                source=best_source or "fused",
+                metadata=best_metadata
+            ))
         
-        # Log top results
-        logger.info(f"Top-3: {[(c.key, f'{c.final_score:.4f}') for c in fusion_candidates[:3]]}")
-        
-        return fusion_candidates
+        return fused_results
 
 class Vuln_RAGRetrievalController:
     """
@@ -179,9 +111,9 @@ class Vuln_RAGRetrievalController:
         """
         Args:
             kb1_index_path: Path to Whoosh index
-            kb2_index_path: Path to FAISS KB2 index  
+            kb2_index_path: Path to HNSW KB2 index  
             kb2_metadata_path: Path to KB2 metadata
-            kb3_index_path: Path to FAISS KB3 index
+            kb3_index_path: Path to HNSW KB3 index
             kb3_metadata_path: Path to KB3 metadata
             rrf_k: RRF parameter
             rrf_weights: Poids par moteur
@@ -241,147 +173,124 @@ class Vuln_RAGRetrievalController:
                 logger.error("Unable to import search_kb3_code_faiss")
                 raise
         return self._kb3_searcher
-        
-    def search_hybrid(self, 
-                     kb1_purpose: str = "",
-                     kb1_function: str = "", 
-                     kb2_vector: Optional[List[float]] = None,
-                     kb3_code: str = "",
-                     top_k: int = 10) -> List[FusionCandidate]:
+    
+    def search(self, 
+               purpose_text: str = "",
+               function_text: str = "",
+               embedding_vector: Optional[List[float]] = None,
+               code_snippet: str = "",
+               top_k: int = 10,
+               verbose: bool = False) -> Dict[str, Any]:
         """
-        Hybrid search in the 3 KBs with RRF fusion
+        Perform hybrid search across all 3 knowledge bases
         
         Args:
-            kb1_purpose: Text for KB1 search (purpose)
-            kb1_function: Text for KB1 search (function)
-            kb2_vector: Embedding vector for KB2
-            kb3_code: Source code for KB3 search
+            purpose_text: Text for KB1 search
+            function_text: Additional text for KB1 search
+            embedding_vector: Vector for KB2 search
+            code_snippet: Code for KB3 search
             top_k: Number of results per engine
+            verbose: Verbose output
             
         Returns:
-            List of fusionned and sorted candidates
+            Dictionary with fused results and individual engine results
         """
         start_time = time.time()
         
-        # Parallel search in the 3 KBs
-        kb1_results = []
-        kb2_results = []
-        kb3_results = []
+        # Search each engine
+        results = {}
         
-        # KB1 - Textual search Whoosh
-        if kb1_purpose or kb1_function:
+        # KB1 search (Whoosh)
+        if purpose_text or function_text:
             try:
                 kb1_searcher = self._get_kb1_searcher()
                 kb1_results = kb1_searcher(
-                    purpose_text=kb1_purpose,
-                    function_text=kb1_function, 
-                    top_k=top_k,
-                    index_dir=self.kb1_index_path
+                    purpose_text=purpose_text,
+                    function_text=function_text,
+                    top_k=top_k
                 )
-                logger.info(f"KB1 Whoosh: {len(kb1_results)} résultats")
-            except Exception as e:
-                logger.warning(f"Erreur KB1: {e}")
                 
-        # KB2 - Vector search CPG  
-        if kb2_vector:
+                # Convert to SearchResult format
+                kb1_search_results = []
+                for i, result in enumerate(kb1_results):
+                    kb1_search_results.append(SearchResult(
+                        key=result.get('key', f'kb1_{i}'),
+                        score=result.get('score', 0.0),
+                        rank=i + 1,
+                        source='kb1',
+                        metadata=result
+                    ))
+                results['kb1'] = kb1_search_results
+                
+                if verbose:
+                    logger.info(f"KB1 found {len(kb1_search_results)} results")
+                    
+            except Exception as e:
+                logger.error(f"KB1 search failed: {e}")
+                results['kb1'] = []
+        
+        # KB2 search (HNSW)
+        if embedding_vector:
             try:
                 kb2_searcher = self._get_kb2_searcher()
-                kb2_results, _ = kb2_searcher.search(
-                    embedding_vector=kb2_vector,
-                    top_k=top_k
-                )
-                logger.info(f"KB2 FAISS CPG: {len(kb2_results)} résultats")
-            except Exception as e:
-                logger.warning(f"Erreur KB2: {e}")
+                kb2_results, _ = kb2_searcher.search(embedding_vector, top_k=top_k)
                 
-        # KB3 - Vector search Code
-        if kb3_code:
+                # Convert to SearchResult format
+                kb2_search_results = []
+                for result in kb2_results:
+                    kb2_search_results.append(SearchResult(
+                        key=result['key'],
+                        score=result['score'],
+                        rank=result['rank'],
+                        source='kb2',
+                        metadata=result
+                    ))
+                results['kb2'] = kb2_search_results
+                
+                if verbose:
+                    logger.info(f"KB2 found {len(kb2_search_results)} results")
+                    
+            except Exception as e:
+                logger.error(f"KB2 search failed: {e}")
+                results['kb2'] = []
+        
+        # KB3 search (HNSW)
+        if code_snippet:
             try:
                 kb3_searcher = self._get_kb3_searcher()
-                kb3_results, _ = kb3_searcher.search(
-                    code_snippet=kb3_code,
-                    top_k=top_k
-                )
-                logger.info(f"KB3 FAISS Code: {len(kb3_results)} résultats")
-            except Exception as e:
-                logger.warning(f"Erreur KB3: {e}")
+                kb3_results, _ = kb3_searcher.search(code_snippet, top_k=top_k)
                 
-        # RRF fusion
-        fusion_candidates = self.rrf.fuse(kb1_results, kb2_results, kb3_results)
+                # Convert to SearchResult format
+                kb3_search_results = []
+                for result in kb3_results:
+                    kb3_search_results.append(SearchResult(
+                        key=result['key'],
+                        score=result['score'],
+                        rank=result['rank'],
+                        source='kb3',
+                        metadata=result
+                    ))
+                results['kb3'] = kb3_search_results
+                
+                if verbose:
+                    logger.info(f"KB3 found {len(kb3_search_results)} results")
+                    
+            except Exception as e:
+                logger.error(f"KB3 search failed: {e}")
+                results['kb3'] = []
         
-        # Add timing
-        search_time_ms = (time.time() - start_time) * 1000
-        for candidate in fusion_candidates:
-            candidate.search_time_ms = search_time_ms
-            
-        logger.info(f"Recherche hybride terminée en {search_time_ms:.1f}ms")
-        logger.info(f"Top-3 candidats: {[(c.key, f'{c.final_score:.3f}') for c in fusion_candidates[:3]]}")
+        # Fuse results
+        fused_results = self.rrf.fuse(results)
         
-        return fusion_candidates
-    
-    def search_from_preprocessed_query(self, query_data: Dict, top_k: int = 10) -> List[FusionCandidate]:
-        """
-        Recherche à partir d'un objet query préprocessé
+        # Calculate timing
+        total_time = time.time() - start_time
         
-        Args:
-            query_data: Dictionary with keys "kb1_purpose", "kb1_function", "kb2_vector", "kb3_code"
-            top_k: Number of results
-            
-        Returns:
-            List of fusionned candidates
-        """
-        return self.search_hybrid(
-            kb1_purpose=query_data.get("kb1_purpose", ""),
-            kb1_function=query_data.get("kb1_function", ""),
-            kb2_vector=query_data.get("kb2_vector"),
-            kb3_code=query_data.get("kb3_code", ""),
-            top_k=top_k
-        )
-
-# Utility functions
-def create_default_controller() -> Vuln_RAGRetrievalController:
-    """Create a controller with default paths"""
-    import os   
-    
-    return Vuln_RAGRetrievalController(
-        kb1_index_path=os.getenv("KB1_INDEX_PATH", "data/KBs/kb1_index"),
-        kb2_index_path=os.getenv("KB2_INDEX_PATH", "data/KBs/kb2_index/kb2_code.index"), 
-        kb2_metadata_path=os.getenv("KB2_METADATA_PATH", "data/KBs/kb2_index/kb2_metadata.json"),
-        kb3_index_path=os.getenv("KB3_INDEX_PATH", "data/KBs/kb3_index/kb3_code.index"),
-        kb3_metadata_path=os.getenv("KB3_METADATA_PATH", "data/KBs/kb3_index/kb3_metadata.json"),
-        rrf_weights={"kb1": 0.3, "kb2": 0.4, "kb3": 0.3}  # Privilégier structure
-    )
-
-def analyze_fusion_performance(candidates: List[FusionCandidate]) -> Dict[str, Any]:
-    """Analyze the performance of the RRF fusion"""
-    if not candidates:
-        return {"error": "No candidates"}
-    
-    # Source coverage
-    source_coverage = {
-        "kb1_coverage": sum(1 for c in candidates if c.kb1_rank is not None) / len(candidates),
-        "kb2_coverage": sum(1 for c in candidates if c.kb2_rank is not None) / len(candidates),
-        "kb3_coverage": sum(1 for c in candidates if c.kb3_rank is not None) / len(candidates)
-    }
-    
-    # Diversité des sources (combien de candidats viennent de plusieurs sources)
-    multi_source = sum(1 for c in candidates if c.total_sources > 1)
-    diversity_ratio = multi_source / len(candidates)
-    
-    # Distribution des scores
-    scores = [c.final_score for c in candidates[:10]]
-    score_stats = {
-        "max_score": max(scores) if scores else 0,
-        "min_score": min(scores) if scores else 0,
-        "score_range": max(scores) - min(scores) if scores else 0,
-        "score_variance": sum((s - sum(scores)/len(scores))**2 for s in scores) / len(scores) if scores else 0
-    }
-    
-    return {
-        "total_candidates": len(candidates),
-        "source_coverage": source_coverage,
-        "diversity_ratio": diversity_ratio,
-        "score_statistics": score_stats,
-        "top_3_scores": scores[:3]
-    }
+        return {
+            'fused_results': fused_results,
+            'engine_results': results,
+            'timing': {
+                'total_time': total_time,
+                'engines_used': list(results.keys())
+            }
+        }
 

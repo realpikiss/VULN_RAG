@@ -11,6 +11,6 @@ with open(snippet_path, "r", encoding="utf-8") as f:
 searcher = get_kb3_searcher()
 results, _ = searcher.search(code_snippet=code, top_k=5, verbose=True)
 
-print("🔍 KB3 Results (FAISS on raw code)")
+print("🔍 KB3 Results (HNSW on raw code)")
 for res in results:
     print(f"[{res['rank']}] Key: {res['key']} | Score: {res['score']:.4f} | CWE: {res['cwe']}")

@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import os
 import numpy as np
-import faiss
+import hnswlib
 import logging
 from pathlib import Path    
 # === Configuration ===
@@ -16,7 +16,7 @@ logger = logging.getLogger("KB2-Migration")
 
 def migrate_kb2():
     """
-    Migrate a KB2 JSON file to a FAISS index + metadata file
+    Migrate a KB2 JSON file to a HNSW index + metadata file
     """
     if not Path(KB2_JSON_PATH).exists():
         raise FileNotFoundError(f"Error: KB2 file not found: {KB2_JSON_PATH}")
@@ -48,21 +48,27 @@ def migrate_kb2():
 
     # Normalization + indexing
     vector_array = np.vstack(vectors)  # concatenate the vectors
-    faiss.normalize_L2(vector_array)  # L2 normalize the vectors
+    # Normalisation L2
+    vector_array = vector_array / np.linalg.norm(vector_array, axis=1, keepdims=True)
 
     dim = vector_array.shape[1]  # dimensionality of the vectors
-    index = faiss.IndexFlatIP(dim)  # create a FAISS index
-    index.add(vector_array)  # add the vectors to the index
+    logger.info(f"Creating HNSW index with dimension {dim}")
+    
+    # Créer l'index HNSW
+    index = hnswlib.Index(space='cosine', dim=dim)
+    index.init_index(max_elements=len(vector_array), ef_construction=200, M=16)
+    index.add_items(vector_array)
+    index.set_ef(50)  # Paramètre de recherche
 
     # Output directories
     Path(OUTPUT_INDEX_PATH).parent.mkdir(parents=True, exist_ok=True)
 
     # Saving
-    faiss.write_index(index, str(OUTPUT_INDEX_PATH))
+    index.save_index(str(OUTPUT_INDEX_PATH))
     with open(str(OUTPUT_METADATA_PATH), "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"Success: FAISS index written to {OUTPUT_INDEX_PATH}")
+    logger.info(f"Success: HNSW index written to {OUTPUT_INDEX_PATH}")
     logger.info(f"Success: metadata JSON written to {OUTPUT_METADATA_PATH}")
     logger.info(f"Total indexed: {len(metadata)}")
 

@@ -1,11 +1,11 @@
-# migrate_kb3_code_faiss.py
+# migrate_kb3_code_hnsw.py
 
 import os
 import json
 import logging
 import numpy as np
 from pathlib import Path
-import faiss
+import hnswlib
 from typing import Dict, List
 from sentence_transformers import SentenceTransformer
 
@@ -60,25 +60,30 @@ def migrate_kb3_code():
 
     logger.info(f"Generating embeddings for {len(codes)} code snippets...")
     vectors = model.encode(codes, batch_size=16, show_progress_bar=True, convert_to_numpy=True)
-    faiss.normalize_L2(vectors)
+    
+    # Normalisation L2
+    vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
     dim = vectors.shape[1]
     logger.info(f"Embedding dimension: {dim}")
 
-    index = faiss.IndexFlatIP(dim)
-    index.add(vectors)
+    # Créer l'index HNSW
+    index = hnswlib.Index(space='cosine', dim=dim)
+    index.init_index(max_elements=len(vectors), ef_construction=200, M=16)
+    index.add_items(vectors)
+    index.set_ef(50)  # Paramètre de recherche
 
     # Create directories if necessary
     OUTPUT_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    faiss.write_index(index, str(OUTPUT_INDEX_PATH))
+    index.save_index(str(OUTPUT_INDEX_PATH))
     with open(OUTPUT_METADATA_PATH, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"FAISS index saved to {OUTPUT_INDEX_PATH}")
+    logger.info(f"HNSW index saved to {OUTPUT_INDEX_PATH}")
     logger.info(f"Metadata saved to {OUTPUT_METADATA_PATH}")
-    logger.info(f"Total indexed: {len(metadata)}")
+
 
 
 if __name__ == "__main__":
