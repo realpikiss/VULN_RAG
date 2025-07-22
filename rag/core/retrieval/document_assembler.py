@@ -207,7 +207,7 @@ class DocumentAssembler:
                     doc_data = dict(hit)
                     docs[key] = doc_data
                 
-                logger.debug(f"Retrieved {len(docs)}/{len(keys)} documents from Whoosh")
+                logger.info(f"Retrieved {len(docs)}/{len(keys)} documents from Whoosh")
                 return docs
                 
         except Exception as e:
@@ -217,56 +217,46 @@ class DocumentAssembler:
     def _assemble_from_whoosh_doc(self, candidate, whoosh_doc: Dict) -> Optional[EnrichedDocument]:
         """Assemble an EnrichedDocument from a Whoosh document"""
         try:
-            # Extraction des champs avec valeurs par défaut sécurisées
+            # Build results dictionary
             doc_data = {
-                # Identifiers
-                "key": candidate.key,
-                "final_score": candidate.final_score,
-                "cve_id": whoosh_doc.get("cve_id", ""),
+                "key": whoosh_doc.get("key", ""),
                 "cwe": whoosh_doc.get("cwe", ""),
-                
-                # Textual fields from KB1
                 "gpt_purpose": whoosh_doc.get("gpt_purpose", ""),
                 "gpt_function": whoosh_doc.get("gpt_function", ""),
-                "gpt_analysis": whoosh_doc.get("gpt_analysis", ""),
-                "solution": whoosh_doc.get("solution", ""),
-                
-                # Source code KB1
+                "dangerous_functions": whoosh_doc.get("dangerous_functions", []),
+                "dangerous_functions_count": whoosh_doc.get("dangerous_functions_count", 0),
+                "risk_class": whoosh_doc.get("risk_class", "unknown"),
+                "embedding_text": whoosh_doc.get("embedding_text", ""),
                 "code_before_change": whoosh_doc.get("code_before_change", ""),
                 "code_after_change": whoosh_doc.get("code_after_change", ""),
-                
-                # CPG analysis KB1  
                 "cpg_vulnerability_pattern": whoosh_doc.get("cpg_vulnerability_pattern", ""),
                 "patch_transformation_analysis": whoosh_doc.get("patch_transformation_analysis", ""),
-                "detection_cpg_signature": whoosh_doc.get("detection_cpg_signature", ""),
-                "remediation_graph_guidance": whoosh_doc.get("remediation_graph_guidance", ""),
-                
-                # CPG data from KB2 (stored in Whoosh)
-                "embedding_text": whoosh_doc.get("embedding_text", ""),
-                "dangerous_functions_count": int(whoosh_doc.get("dangerous_functions_count", 0)),
-                "dangerous_functions_detected": bool(whoosh_doc.get("dangerous_functions_detected", False)),
-                "risk_class": whoosh_doc.get("risk_class", "unknown"),
-                "complexity_class": whoosh_doc.get("complexity_class", "unknown"),
-                
-                # Analyse patch from KB2
-                "net_dangerous_change": int(whoosh_doc.get("net_dangerous_change", 0)),
-                
-                # Calculated metadata
-                "code_lines_count": int(whoosh_doc.get("code_lines_count", 0)),
-                "has_code_before": bool(whoosh_doc.get("has_code_before", False)),
-                "has_code_after": bool(whoosh_doc.get("has_code_after", False)),
+                "final_score": candidate.final_score,
             }
             
-            # Parsing JSON fields stored in Whoosh
-            doc_data["dangerous_functions"] = self._parse_json_field(
-                whoosh_doc.get("dangerous_functions", ""), default=[]
-            )
-            doc_data["dangerous_functions_added"] = self._parse_json_field(
-                whoosh_doc.get("dangerous_functions_added", ""), default=[]
-            )
-            doc_data["dangerous_functions_removed"] = self._parse_json_field(
-                whoosh_doc.get("dangerous_functions_removed", ""), default=[]
-            )
+            # Extract fields with secure default values
+            try:
+                doc_data["dangerous_functions"] = self._parse_json_field(
+                    whoosh_doc.get("dangerous_functions", "[]"), default=[]
+                )
+            except Exception:
+                doc_data["dangerous_functions"] = []
+            
+            # Patch analysis from KB2 - extract individual fields instead of storing as dict
+            try:
+                patch_analysis = self._parse_json_field(
+                    whoosh_doc.get("patch_analysis", "{}"), default={}
+                )
+                # Extract individual fields that are already in EnrichedDocument
+                doc_data["dangerous_functions_added"] = patch_analysis.get("dangerous_functions_added", [])
+                doc_data["dangerous_functions_removed"] = patch_analysis.get("dangerous_functions_removed", [])
+                doc_data["net_dangerous_change"] = patch_analysis.get("net_dangerous_change", 0)
+            except Exception:
+                doc_data["dangerous_functions_added"] = []
+                doc_data["dangerous_functions_removed"] = []
+                doc_data["net_dangerous_change"] = 0
+            
+            # Parsing JSON fields stored in Whoosh (dangerous_functions_added/removed already handled above)
             doc_data["vulnerability_behavior"] = self._parse_json_field(
                 whoosh_doc.get("vulnerability_behavior", ""), default={}
             )
@@ -274,7 +264,7 @@ class DocumentAssembler:
                 whoosh_doc.get("modified_lines", ""), default={}
             )
             
-            # Provenance pour debugging
+            # Provenance information
             doc_data["provenance"] = {
                 "kb1_rank": getattr(candidate, 'kb1_rank', None),
                 "kb2_rank": getattr(candidate, 'kb2_rank', None), 
@@ -303,10 +293,10 @@ class DocumentAssembler:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
-            logger.debug(f"Error parsing JSON: {json_str[:50]}...")
+            logger.warning(f"Error parsing JSON: {json_str[:50]}...")
             return default if default is not None else {}
         except Exception as e:
-            logger.debug(f"Error parsing JSON: {e}")
+            logger.warning(f"Error parsing JSON: {e}")
             return default if default is not None else {}
     
     def get_document_by_key(self, key: str) -> Optional[EnrichedDocument]:

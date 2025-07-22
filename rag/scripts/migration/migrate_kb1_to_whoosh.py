@@ -2,11 +2,28 @@
 
 import json
 import os
+import logging
 from whoosh import index
 from whoosh.fields import Schema, TEXT, ID, STORED
 from whoosh.analysis import StemmingAnalyzer, StandardAnalyzer
 from whoosh.index import create_in
 from pathlib import Path
+
+# Logger setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("KB1-Migration")
+
+# Load environment variables from .env file
+def load_env():
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file, "r") as f:
+            for line in f:
+                if line.strip() and not line.startswith("#"):
+                    key, value = line.strip().split("=", 1)
+                    os.environ[key] = value
+
+load_env()
 
 # Input/output parameters
 KB1_JSON_PATH = Path(os.getenv("KB1_PATH"))
@@ -145,7 +162,7 @@ def extract_kb2_patch_analysis(kb2_entry: dict) -> tuple:
     return dangerous_added, dangerous_removed, net_change
 
 # 📦 Creating or opening the index
-print(f"Creating  Whoosh index at {INDEX_DIR}")
+    logger.info(f"Creating Whoosh index at {INDEX_DIR}")
 Path(INDEX_DIR).mkdir(parents=True, exist_ok=True)
 
 # Supprimer l'index existant s'il existe pour recréer avec nouveau schema
@@ -163,7 +180,7 @@ if not KB1_JSON_PATH.exists():
 with open(KB1_JSON_PATH, "r", encoding="utf-8") as f:
     kb1_entries = json.load(f)
 
-print(f"→ Loaded {len(kb1_entries)} entries from KB1: {KB1_JSON_PATH}")
+    logger.info(f"→ Loaded {len(kb1_entries)} entries from KB1: {KB1_JSON_PATH}")
 
 # 📤 Loading KB2 (pour enrichissement)
 kb2_entries = {}
@@ -176,9 +193,9 @@ if KB2_JSON_PATH and KB2_JSON_PATH.exists():
         # Si KB2 est un dict avec key comme clé
         elif isinstance(kb2_data, dict):
             kb2_entries = kb2_data
-    print(f"→ Loaded {len(kb2_entries)} entries from KB2: {KB2_JSON_PATH}")
+    logger.info(f"→ Loaded {len(kb2_entries)} entries from KB2: {KB2_JSON_PATH}")
 else:
-    print("⚠️  KB2 not found, proceeding without CPG enrichment")
+    logger.warning("⚠️  KB2 not found, proceeding without CPG enrichment")
 
 # 🧾 Indexing avec tous les champs enrichis
 with ix.writer() as writer:
@@ -279,27 +296,27 @@ with ix.writer() as writer:
             indexed += 1
             
             if indexed % 100 == 0:
-                print(f"   Processed {indexed} documents... (KB2 : {kb2_})")
+                logger.info(f"   Processed {indexed} documents... (KB2 : {kb2_})")
                 
         except Exception as e:
-            print(f"[⚠️] Error with key {key}: {e}")
+            logger.error(f"[⚠️] Error with key {key}: {e}")
             errors += 1
             continue
 
-print(f"✅ {indexed} documents successfully indexed in Whoosh ({INDEX_DIR})")
-print(f"✅ {kb2_} documents  with KB2 data")
+logger.info(f"✅ {indexed} documents successfully indexed in Whoosh ({INDEX_DIR})")
+logger.info(f"✅ {kb2_} documents  with KB2 data")
 if errors > 0:
-    print(f"⚠️ {errors} errors encountered during indexing")
+    logger.warning(f"⚠️ {errors} errors encountered during indexing")
 
 # Statistiques de l'index créé
-print(f"\nIndex Statistics:")
-print(f"   Schema fields: {len(schema.names())} fields")
-print(f"   KB1 source documents: {len(kb1_entries)}")
-print(f"   KB2 enrichment coverage: {kb2_}/{len(kb1_entries)} ({100*kb2_/len(kb1_entries):.1f}%)")
-print(f"   Total indexed: {indexed}")
+logger.info(f"\nIndex Statistics:")
+logger.info(f"   Schema fields: {len(schema.names())} fields")
+logger.info(f"   KB1 source documents: {len(kb1_entries)}")
+logger.info(f"   KB2 enrichment coverage: {kb2_}/{len(kb1_entries)} ({100*kb2_/len(kb1_entries):.1f}%)")
+logger.info(f"   Total indexed: {indexed}")
 
 # Test de l'index créé
-print(f"\nTesting index...")
+logger.info(f"\nTesting index...")
 with ix.searcher() as searcher:
     # Test simple
     from whoosh.qparser import QueryParser
@@ -307,15 +324,15 @@ with ix.searcher() as searcher:
     query = parser.parse("buffer overflow")
     results = searcher.search(query, limit=3)
     
-    print(f"   Test query 'buffer overflow' found {len(results)} results")
+    logger.info(f"   Test query 'buffer overflow' found {len(results)} results")
     for i, hit in enumerate(results[:2], 1):
         dangerous_count = hit.get('dangerous_functions_count', 0)
         risk_class = hit.get('risk_class', 'unknown')
-        print(f"   {i}. {hit['key']}")
-        print(f"      Purpose: {hit['gpt_purpose'][:80]}...")
-        print(f"      Dangerous functions: {dangerous_count}, Risk: {risk_class}")
+        logger.info(f"   {i}. {hit['key']}")
+        logger.info(f"      Purpose: {hit['gpt_purpose'][:80]}...")
+        logger.info(f"      Dangerous functions: {dangerous_count}, Risk: {risk_class}")
 
-print(f"\n KB1 Whoosh index successfully created!")
-print(f"   Location: {INDEX_DIR}")
-print(f"   Features: KB1 text + KB2 CPG analysis + unified storage")
-print(f"   Ready for high-performance document retrieval!")
+logger.info(f"\n KB1 Whoosh index successfully created!")
+logger.info(f"   Location: {INDEX_DIR}")
+logger.info(f"   Features: KB1 text + KB2 CPG analysis + unified storage")
+logger.info(f"   Ready for high-performance document retrieval!")

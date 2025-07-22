@@ -8,8 +8,8 @@ from retrieval.search_kb2_faiss import get_kb2_structure_searcher
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Recherche FAISS KB2")
-    parser.add_argument("--vectorfile", type=str, required=True, help="Fichier JSON avec embedding vector")
+    parser = argparse.ArgumentParser(description="FAISS search KB2")
+    parser.add_argument("--vectorfile", type=str, required=True, help="JSON file with embedding vector")
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -23,4 +23,4 @@ if __name__ == "__main__":
 
     with open("kb2_faiss_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    print("✅ Résultats sauvegardés dans kb2_faiss_results.json")
+    print("✅ Results saved in kb2_faiss_results.json")

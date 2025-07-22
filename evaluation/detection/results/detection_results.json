@@ -1,0 +1,45 @@
+{
+  "gpt": {
+    "metrics": {
+      "accuracy": 1.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "total_samples": 1,
+      "vulnerable_detected": "0",
+      "vulnerable_actual": "0",
+      "true_positives": 0,
+      "false_positives": 0,
+      "true_negatives": 1,
+      "false_negatives": 0,
+      "auc_roc": NaN,
+      "auc_pr": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0,
+      "total_time": 0.3352649211883545,
+      "avg_time_per_sample": 0.3352649211883545
+    },
+    "detailed_results": [
+      {
+        "sample_id": 0,
+        "true_label": 0,
+        "prediction": 0,
+        "confidence": 0.1,
+        "correct": true
+      }
+    ],
+    "detection_results": {
+      "predictions": [
+        0
+      ],
+      "confidences": [
+        0.1
+      ],
+      "true_labels": [
+        0
+      ],
+      "total_time": 0.3352649211883545,
+      "avg_time_per_sample": 0.3352649211883545
+    }
+  }
+}

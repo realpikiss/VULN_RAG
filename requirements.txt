@@ -1,3 +1,46 @@
-sentence-transformers
-faiss-cpu
-whoosh
+# Core RAG and ML dependencies
+ragatouille==0.0.9.post2
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
+whoosh==2.7.4
+numpy==1.24.3
+pandas==2.0.3
+scikit-learn==1.3.0
+
+# LLM and AI dependencies
+ollama==0.1.7
+openai==1.3.0
+anthropic==0.7.0
+
+# Data processing and utilities
+dataclasses-json==0.6.1
+pydantic==2.4.2
+python-dotenv==1.0.0
+requests==2.31.0
+tqdm==4.66.1
+
+# Web interface
+streamlit==1.28.0
+
+# FastAPI and WebSocket support
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+
+# Utilities and development
+click==8.1.7
+rich==13.7.0
+loguru==0.7.2
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Evaluation framework
+matplotlib==3.7.2
+seaborn==0.12.2
+plotly==5.17.0
+
+# System dependencies (install separately)
+# - clang-tidy (via llvm)
+# - semgrep
+# - cppcheck
+# - flawfinder

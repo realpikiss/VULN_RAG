@@ -8,6 +8,8 @@ Extraction CPG + embedding 384D avec Joern
 import json
 import subprocess
 import tempfile
+import json
+import shutil
 from pathlib import Path
 from typing import Dict
 from collections import Counter
@@ -129,52 +131,63 @@ class CPGExtractor:
             except (KeyError, IndexError, TypeError):
                 return default
         
-        # Analyse des appels de fonction
-        call_vertices = [v for v in vertices if v.get('label') == 'CALL']
-        dangerous_calls = []
-        all_calls = []
+        # Analyze function calls from GraphSON data
+        function_calls = []
+        for vertex in vertices:
+            if extract_property_safe(vertex, 'label') == 'CALL':
+                function_calls.append({
+                    "name": extract_property_safe(vertex, 'name', 'unknown'),
+                    "line": extract_property_safe(vertex, 'lineNumber', 0),
+                    "column": extract_property_safe(vertex, 'columnNumber', 0)
+                })
         
-        for call_vertex in call_vertices:
-            func_name = extract_property_safe(call_vertex, 'NAME')
-            if not func_name:
-                code = extract_property_safe(call_vertex, 'CODE', '')
-                if '(' in code:
-                    func_name = code.split('(')[0].strip().split()[-1]
-            
-            if func_name:
-                all_calls.append(func_name)
-                
-                # Classification selon taxonomie
-                if func_name in self.taxonomy:
-                    classification = self.taxonomy[func_name]
-                    dangerous_calls.append({
-                        'function': func_name,
-                        'category': classification['category'],
-                        'risk_level': classification['risk_level']
-                    })
+        # Extract control flow from edges
+        control_flow = []
+        for edge in edges:
+            if extract_property_safe(edge, 'label') == 'CFG':
+                control_flow.append({
+                    "from": extract_property_safe(edge, 'outV', 'unknown'),
+                    "to": extract_property_safe(edge, 'inV', 'unknown'),
+                    "type": "control_flow"
+                })
         
-        # Métriques de base
+        # Complexity classification
+        complexity_score = len(function_calls) + len(control_flow) * 0.5
+        if complexity_score < 10:
+            complexity_class = "simple"
+        elif complexity_score < 30:
+            complexity_class = "medium"
+        else:
+            complexity_class = "complex"
+        
+        # Calculate basic metrics
         vertex_count = len(vertices)
         edge_count = len(edges)
         
-        # Classification de complexité
-        if vertex_count > 200:
-            size_class = 'large'
-        elif vertex_count > 50:
-            size_class = 'medium'
-        else:
-            size_class = 'small'
+        # Analyze dangerous function calls
+        all_calls = function_calls
+        dangerous_calls = []
+        for call in function_calls:
+            func_name = call['name']
+            if func_name in self.taxonomy:
+                dangerous_calls.append({
+                    'function': func_name,
+                    'risk_level': self.taxonomy[func_name]['risk_level'],
+                    'category': self.taxonomy[func_name]['category'],
+                    'line': call['line']
+                })
         
-        # Classification de risque
-        high_risk_count = sum(1 for call in dangerous_calls if call['risk_level'] == 'high')
-        if high_risk_count > 0:
-            risk_class = 'high'
-        elif len(dangerous_calls) > 2:
-            risk_class = 'medium'
-        elif len(dangerous_calls) > 0:
-            risk_class = 'low'
+        # Complexity classification
+        complexity_score = len(function_calls) + len(control_flow) * 0.5
+        if complexity_score < 10:
+            size_class = "simple"
+            risk_class = "low"
+        elif complexity_score < 30:
+            size_class = "medium"
+            risk_class = "medium" if dangerous_calls else "low"
         else:
-            risk_class = 'unknown'
+            size_class = "complex"
+            risk_class = "high" if dangerous_calls else "medium"
         
         return {
             'basic_metrics': {

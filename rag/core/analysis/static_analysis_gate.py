@@ -28,6 +28,14 @@ except ImportError:  # wrapper might not exist yet
     def scan_flawfinder(code: str) -> List[Dict]:  # type: ignore
         return []
 
+try:
+    from .clang_tidy_wrapper import has_critical_vulnerability as has_critical_vulnerability_clang, scan_code as scan_clang_tidy
+except ImportError:
+    def scan_clang_tidy(code: str):
+        return []
+    def has_critical_vulnerability_clang(issues):
+        return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +52,7 @@ class StaticAnalysisGate:
             {
                 "security_assessment": "LIKELY_SAFE" | "POTENTIALLY_VULNERABLE",
                 "cppcheck_issues": [...],
+                "clang_tidy_issues": [...],
                 "flawfinder_issues": [...],
                 "message": str,
             }
@@ -54,11 +63,23 @@ class StaticAnalysisGate:
             return {
                 "security_assessment": "POTENTIALLY_VULNERABLE",
                 "cppcheck_issues": cppcheck_issues,
+                "clang_tidy_issues": [],
                 "flawfinder_issues": [],
                 "message": "Critical vulnerabilities detected by cppcheck",
             }
 
-        # 2. Flawfinder (if enabled)
+        # 2. Clang-Tidy
+        clang_tidy_issues = scan_clang_tidy(code)
+        if has_critical_vulnerability_clang(clang_tidy_issues):
+            return {
+                "security_assessment": "POTENTIALLY_VULNERABLE",
+                "cppcheck_issues": cppcheck_issues,
+                "clang_tidy_issues": clang_tidy_issues,
+                "flawfinder_issues": [],
+                "message": "Critical vulnerabilities detected by clang-tidy",
+            }
+
+        # 3. Flawfinder (if enabled)
         flaw_issues: List[Dict] = []
         if self.enable_flawfinder:
             flaw_issues = scan_flawfinder(code)
@@ -66,6 +87,7 @@ class StaticAnalysisGate:
                 return {
                     "security_assessment": "POTENTIALLY_VULNERABLE",
                     "cppcheck_issues": cppcheck_issues,
+                    "clang_tidy_issues": clang_tidy_issues,
                     "flawfinder_issues": flaw_issues,
                     "message": "High-risk findings detected by flawfinder",
                 }
@@ -74,6 +96,7 @@ class StaticAnalysisGate:
         return {
             "security_assessment": "LIKELY_SAFE",
             "cppcheck_issues": cppcheck_issues,
+            "clang_tidy_issues": clang_tidy_issues,
             "flawfinder_issues": flaw_issues,
             "message": "No high-severity findings from static analyzers",
         }

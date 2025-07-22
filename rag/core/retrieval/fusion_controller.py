@@ -154,11 +154,12 @@ class ReciprocalRankFusion:
             
             fusion_candidates.append(candidate)
             
-        # Sort by RRF score descending
+        # Sort by final score
         fusion_candidates.sort(key=lambda x: x.final_score, reverse=True)
         
-        logger.info(f"RRF Fusion: {len(fusion_candidates)} unique candidates generated")
-        logger.debug(f"Top-3: {[(c.key, f'{c.final_score:.4f}') for c in fusion_candidates[:3]]}")
+        # Log top results
+        logger.info(f"Top-3: {[(c.key, f'{c.final_score:.4f}') for c in fusion_candidates[:3]]}")
+        
         return fusion_candidates
 
 class Vuln_RAGRetrievalController:

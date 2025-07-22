@@ -9,11 +9,23 @@ import faiss
 from typing import Dict, List
 from sentence_transformers import SentenceTransformer
 
+# Load environment variables from .env file
+def load_env():
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file, "r") as f:
+            for line in f:
+                if line.strip() and not line.startswith("#"):
+                    key, value = line.strip().split("=", 1)
+                    os.environ[key] = value
+
+load_env()
+
 # === Configuration ===
-KB1_JSON_PATH = Path(os.getenv("KB1_PATH", "data/processed/kb1_enriched/kb1.json"))
-OUTPUT_INDEX_PATH = Path(os.getenv("KB3_INDEX_PATH", "data/indexes/kb3_index/kb3_code.index"))
-OUTPUT_METADATA_PATH = Path(os.getenv("KB3_METADATA_PATH", "kb3_metadata.json"))
-EMBEDDING_MODEL = os.getenv("KB3_MODEL", "all-MiniLM-L6-v2")
+KB1_JSON_PATH = Path(os.getenv("KB1_PATH"))
+OUTPUT_INDEX_PATH = Path(os.getenv("KB3_INDEX_PATH"))
+OUTPUT_METADATA_PATH = Path(os.getenv("KB3_METADATA_PATH"))
+EMBEDDING_MODEL = os.getenv("KB3_MODEL")
 
 # === Logger ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
