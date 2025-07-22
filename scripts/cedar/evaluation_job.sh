@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=def-username
+#SBATCH --account=def-vernet
 #SBATCH --time=4:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
@@ -10,6 +10,7 @@
 module load python/3.9
 module load gcc/9.3.0
 module load llvm/12.0.0
+module load java/11
 
 # Activer l'environnement
 source venv/bin/activate
@@ -23,6 +24,9 @@ export FAISS_NUM_THREADS=4
 export HF_HOME=/scratch/$USER/vulnrag/huggingface
 export TRANSFORMERS_CACHE=/scratch/$USER/vulnrag/huggingface/transformers
 export HF_DATASETS_CACHE=/scratch/$USER/vulnrag/huggingface/datasets
+
+# Configuration Joern
+export PATH="$HOME/.local/share/coursier/bin:$PATH"
 
 # Créer les répertoires de logs si nécessaire
 mkdir -p logs
