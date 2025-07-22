@@ -32,18 +32,21 @@ mkdir -p "$PROJECT_DIR"/kb1_index
 mkdir -p "$PROJECT_DIR"/kb2_index
 mkdir -p "$PROJECT_DIR"/kb3_index
 mkdir -p "$CACHE_DIR"/{transformers,datasets}
+mkdir -p "$PROJECT_DIR"/joern
 
 # Charger les modules nécessaires
 echo "Chargement des modules..."
 module load python/3.9
 module load gcc/9.3.0
 module load llvm/12.0.0
+module load java/11
 
 # Vérifier que les modules sont chargés
 echo "Vérification des modules..."
 python --version
 gcc --version
 clang-tidy --version
+java -version
 
 # Créer l'environnement virtuel
 echo "Création de l'environnement virtuel..."
@@ -64,6 +67,33 @@ pip install flawfinder semgrep
 if ! command -v cppcheck &> /dev/null; then
     echo "Installation de cppcheck..."
     conda install -c conda-forge cppcheck -y
+fi
+
+# Installation de Joern (CRITIQUE pour CPG)
+echo "Installation de Joern..."
+if ! command -v joern-parse &> /dev/null; then
+    echo "Joern non trouvé, installation via coursier..."
+    
+    # Installer coursier
+    curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
+    chmod +x cs
+    ./cs setup
+    
+    # Installer Joern
+    ./cs install joern
+    
+    # Ajouter au PATH
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    
+    # Vérifier l'installation
+    if command -v joern-parse &> /dev/null; then
+        echo "✓ Joern installé avec succès"
+    else
+        echo "✗ Échec de l'installation de Joern"
+        exit 1
+    fi
+else
+    echo "✓ Joern déjà installé"
 fi
 
 # Créer le fichier .env
@@ -88,7 +118,58 @@ SLURM_TMPDIR=\$SLURM_TMPDIR
 # Modèles Hugging Face
 QWEN2_5_MODEL=Qwen/Qwen2.5-7B-Instruct
 KIRITO_MODEL=Qwen/Qwen2.5-14B-Instruct
+
+# Configuration Joern
+JOERN_HOME=$PROJECT_DIR/joern
+JAVA_HOME=\$JAVA_HOME
 EOF
+
+# Script de vérification des outils
+echo "Création du script de vérification..."
+cat > check_tools.sh << 'EOF'
+#!/bin/bash
+echo "=== Vérification des outils VulnRAG ==="
+
+# Outils statiques
+echo "1. Outils statiques:"
+tools=("cppcheck" "clang-tidy" "flawfinder" "semgrep")
+for tool in "${tools[@]}"; do
+    if command -v $tool &> /dev/null; then
+        echo "  ✓ $tool: $(which $tool)"
+    else
+        echo "  ✗ $tool: NON TROUVÉ"
+    fi
+done
+
+# Joern (CRITIQUE pour CPG extraction):
+echo "2. Joern (CPG extraction):"
+if command -v joern-parse &> /dev/null && command -v joern-export &> /dev/null; then
+    echo "  ✓ joern-parse: $(which joern-parse)"
+    echo "  ✓ joern-export: $(which joern-export)"
+else
+    echo "  ✗ Joern: NON TROUVÉ - CRITIQUE pour CPG extraction"
+fi
+
+# Java
+echo "3. Java (requis pour Joern):"
+if command -v java &> /dev/null; then
+    echo "  ✓ Java: $(java -version 2>&1 | head -1)"
+else
+    echo "  ✗ Java: NON TROUVÉ"
+fi
+
+# Python packages
+echo "4. Python packages:"
+python -c "import transformers; print('  ✓ transformers')" 2>/dev/null || echo "  ✗ transformers"
+python -c "import torch; print('  ✓ torch')" 2>/dev/null || echo "  ✗ torch"
+python -c "import sentence_transformers; print('  ✓ sentence_transformers')" 2>/dev/null || echo "  ✗ sentence_transformers"
+python -c "import faiss; print('  ✓ faiss')" 2>/dev/null || echo "  ✗ faiss"
+python -c "import whoosh; print('  ✓ whoosh')" 2>/dev/null || echo "  ✗ whoosh"
+
+echo "=== Fin de vérification ==="
+EOF
+
+chmod +x check_tools.sh
 
 # Tester l'accès aux modèles Hugging Face
 echo "Test de l'accès aux modèles Hugging Face..."
@@ -108,6 +189,21 @@ print('✓ Tokenizer Kirito chargé avec succès')
 
 print('Tous les tests sont passés avec succès!')
 "
+
+# Test spécifique de Joern
+echo "Test de Joern..."
+echo "int main() { return 0; }" > test.c
+if command -v joern-parse &> /dev/null; then
+    joern-parse test.c -o test.cpg
+    if [ -f test.cpg ]; then
+        echo "✓ Joern fonctionne correctement"
+        rm test.c test.cpg
+    else
+        echo "✗ Problème avec Joern"
+    fi
+else
+    echo "✗ Joern non disponible"
+fi
 
 # Rendre les scripts exécutables
 echo "Configuration des permissions des scripts..."
@@ -205,6 +301,17 @@ def test_tools():
                 print(f"✗ {tool} non disponible")
         except (subprocess.TimeoutExpired, FileNotFoundError):
             print(f"✗ {tool} non trouvé")
+    
+    # Test spécifique de Joern
+    try:
+        result = subprocess.run(['joern-parse', '--help'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            print("✓ joern-parse disponible")
+        else:
+            print("✗ joern-parse non disponible")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        print("✗ joern-parse non trouvé")
 
 if __name__ == "__main__":
     print("=== Test de configuration VulnRAG ===\n")
@@ -228,10 +335,11 @@ echo ""
 echo "=== Configuration terminée ==="
 echo ""
 echo "Prochaines étapes:"
-echo "1. Tester la configuration: python test_setup.py"
-echo "2. Générer les index: python rag/scripts/migration/migrate_*.py"
-echo "3. Lancer un test rapide: sbatch scripts/cedar/quick_test.sh"
-echo "4. Lancer l'évaluation complète: sbatch scripts/cedar/evaluation_job.sh"
+echo "1. Vérifier les outils: ./check_tools.sh"
+echo "2. Tester la configuration: python test_setup.py"
+echo "3. Générer les index: python rag/scripts/migration/migrate_*.py"
+echo "4. Lancer un test rapide: sbatch scripts/cedar/quick_test.sh"
+echo "5. Lancer l'évaluation complète: sbatch scripts/cedar/evaluation_job.sh"
 echo ""
 echo "Répertoires créés:"
 echo "  - Projet: $PROJECT_DIR"

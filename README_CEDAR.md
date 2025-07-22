@@ -1,4 +1,4 @@
-# 🖥️ Migration VulnRAG vers ComputeCanada Cedar
+# 🖥️ Migration VulnRAG vers ComputeCanada Cedar (Hugging Face)
 
 ## Vue d'ensemble
 
@@ -26,19 +26,25 @@ git checkout cedar-migration
 bash scripts/cedar/setup_cedar.sh
 ```
 
-### 3. Test de la configuration
+### 3. Vérification des outils
+```bash
+# Vérifier tous les outils installés
+./check_tools.sh
+```
+
+### 4. Test de la configuration
 ```bash
 python test_setup.py
 ```
 
-### 4. Génération des index
+### 5. Génération des index
 ```bash
 python rag/scripts/migration/migrate_kb1_to_whoosh.py
 python rag/scripts/migration/migrate_kb2_to_faiss.py
 python rag/scripts/migration/migrate_kb3_code_faiss.py
 ```
 
-### 5. Lancement des tests
+### 6. Lancement des tests
 ```bash
 # Test rapide
 sbatch scripts/cedar/quick_test.sh
@@ -60,15 +66,35 @@ module load python/3.9
 module load gcc/9.3.0
 module load llvm/12.0.0  # Pour clang-tidy
 module load cuda/11.4    # Si utilisation GPU
+module load java/11      # Pour Joern
 ```
 
 #### Outils statiques
 ```bash
-# Cppcheck
-conda install -c conda-forge cppcheck
+# Vérifier les modules disponibles
+module avail cppcheck
+module avail flawfinder
+module avail semgrep
 
-# Flawfinder et Semgrep
+# Installation via conda/pip
+conda install -c conda-forge cppcheck
 pip install flawfinder semgrep
+```
+
+#### Installation de Joern (CRITIQUE)
+```bash
+# Joern nécessite Java 11+
+module load java/11
+
+# Installation via coursier
+curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
+chmod +x cs
+./cs setup
+./cs install joern
+
+# Vérifier l'installation
+joern-parse --help
+joern-export --help
 ```
 
 ### Structure des répertoires
@@ -79,6 +105,7 @@ pip install flawfinder semgrep
 ├── huggingface/            # Cache Hugging Face
 │   ├── transformers/       # Modèles et tokenizers
 │   └── datasets/          # Datasets
+├── joern/                 # Configuration Joern
 ├── kb1_index/             # Index Whoosh
 ├── kb2_index/             # Index FAISS CPG
 ├── kb3_index/             # Index FAISS code
@@ -107,6 +134,10 @@ HF_DATASETS_CACHE=/scratch/username/vulnrag/huggingface/datasets
 # Modèles Hugging Face
 QWEN2_5_MODEL=Qwen/Qwen2.5-7B-Instruct
 KIRITO_MODEL=Qwen/Qwen2.5-14B-Instruct
+
+# Configuration Joern
+JOERN_HOME=/scratch/username/vulnrag/joern
+JAVA_HOME=$JAVA_HOME
 ```
 
 ## 📋 Scripts SLURM
@@ -219,21 +250,37 @@ python evaluation/detection/quick_test.py
 
 ### Problèmes courants
 
-#### 1. Modules non trouvés
+#### 1. Joern non trouvé
+```bash
+# Vérifier Java
+java -version
+
+# Installer Joern via coursier
+curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
+chmod +x cs
+./cs setup
+./cs install joern
+
+# Vérifier l'installation
+joern-parse --help
+```
+
+#### 2. Modules non trouvés
 ```bash
 # Vérifier les modules disponibles
 module avail python
 module avail gcc
 module avail llvm
+module avail java
 ```
 
-#### 2. Mémoire insuffisante
+#### 3. Mémoire insuffisante
 ```bash
 # Augmenter la mémoire dans les scripts SLURM
 #SBATCH --mem=128G  # Au lieu de 64G
 ```
 
-#### 3. Modèles Hugging Face non téléchargés
+#### 4. Modèles Hugging Face non téléchargés
 ```bash
 # Vérifier l'accès internet
 curl -I https://huggingface.co
@@ -242,7 +289,7 @@ curl -I https://huggingface.co
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen2.5-7B-Instruct')"
 ```
 
-#### 4. GPU non disponible
+#### 5. GPU non disponible
 ```bash
 # Vérifier la disponibilité des GPUs
 sinfo -p gpu
@@ -262,6 +309,9 @@ tail -f evaluation_log.txt
 
 # Cache Hugging Face
 ls -la /scratch/username/vulnrag/huggingface/
+
+# Test Joern
+joern-parse --help
 ```
 
 ## 🔄 Migration depuis Ollama
@@ -301,11 +351,12 @@ result = interface.generate(prompt)
 
 ## 🎯 Prochaines étapes
 
-1. **Test de la configuration** : `python test_setup.py`
-2. **Génération des index** : Scripts de migration
-3. **Test rapide** : `sbatch scripts/cedar/quick_test.sh`
-4. **Évaluation complète** : `sbatch scripts/cedar/evaluation_job.sh`
-5. **Optimisation** : Ajuster les paramètres selon les résultats
+1. **Vérifier les outils** : `./check_tools.sh`
+2. **Test de la configuration** : `python test_setup.py`
+3. **Génération des index** : Scripts de migration
+4. **Test rapide** : `sbatch scripts/cedar/quick_test.sh`
+5. **Évaluation complète** : `sbatch scripts/cedar/evaluation_job.sh`
+6. **Optimisation** : Ajuster les paramètres selon les résultats
 
 ## 📞 Support
 
