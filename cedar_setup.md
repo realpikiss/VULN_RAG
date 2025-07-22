@@ -36,19 +36,16 @@ module load flawfinder
 module load semgrep
 ```
 
-#### **Installation via conda/pip**
+#### **Installation via conda/pip (sans droits admin)**
 ```bash
 # Cppcheck (via conda)
 conda install -c conda-forge cppcheck
 
-# Flawfinder (via pip)
-pip install flawfinder
-
-# Semgrep (via pip)
-pip install semgrep
+# Flawfinder et Semgrep (via pip dans l'environnement virtuel)
+pip install flawfinder semgrep
 ```
 
-#### **Installation de Joern (CRITIQUE)**
+#### **Installation de Joern (CRITIQUE) - Sans droits admin**
 ```bash
 # Joern nécessite Java 11+
 module load java/11
@@ -56,19 +53,20 @@ module load java/11
 # Vérifier Java
 java -version
 
-# Installation de Joern via coursier
+# Installation de Joern via coursier (dans le répertoire utilisateur)
+cd ~
 curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
 chmod +x cs
 ./cs setup
 
-# Installer Joern
+# Installer Joern dans le répertoire utilisateur
 ./cs install joern
 
 # Vérifier l'installation
-joern-parse --help
-joern-export --help
+~/.local/share/coursier/bin/joern-parse --help
+~/.local/share/coursier/bin/joern-export --help
 
-# Ajouter au PATH
+# Ajouter au PATH pour cette session
 export PATH="$HOME/.local/share/coursier/bin:$PATH"
 ```
 
@@ -95,6 +93,10 @@ echo "2. Joern (CPG extraction):"
 if command -v joern-parse &> /dev/null && command -v joern-export &> /dev/null; then
     echo "  ✓ joern-parse: $(which joern-parse)"
     echo "  ✓ joern-export: $(which joern-export)"
+elif [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
+    echo "  ✓ joern-parse: $HOME/.local/share/coursier/bin/joern-parse"
+    echo "  ✓ joern-export: $HOME/.local/share/coursier/bin/joern-export"
+    echo "  ⚠️  Joern installé mais pas dans PATH - ajouter: export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\""
 else
     echo "  ✗ Joern: NON TROUVÉ - CRITIQUE pour CPG extraction"
 fi
@@ -120,6 +122,50 @@ EOF
 
 chmod +x check_tools.sh
 ./check_tools.sh
+```
+
+## 🖥️ Gestion des GPUs sur Cedar
+
+### **Vérifier la disponibilité des GPUs**
+```bash
+# Voir les partitions GPU disponibles
+sinfo -p gpu
+
+# Voir les GPUs disponibles
+squeue -p gpu
+
+# Voir les spécifications des GPUs
+nvidia-smi  # Si tu as accès à un nœud GPU
+```
+
+### **Demander des ressources GPU**
+```bash
+# Demander un nœud avec GPU
+salloc --account=def-username --time=2:00:00 --mem=32G --cpus-per-task=8 --gres=gpu:1
+
+# Ou spécifier un type de GPU particulier
+salloc --account=def-username --time=2:00:00 --mem=32G --cpus-per-task=8 --gres=gpu:v100:1
+salloc --account=def-username --time=2:00:00 --mem=32G --cpus-per-task=8 --gres=gpu:a100:1
+```
+
+### **Types de GPUs disponibles sur Cedar**
+```bash
+# V100 (16GB VRAM)
+salloc --gres=gpu:v100:1
+
+# A100 (40GB VRAM) - Plus puissant
+salloc --gres=gpu:a100:1
+
+# RTX 6000 (24GB VRAM)
+salloc --gres=gpu:rtx6000:1
+```
+
+### **Vérifier l'accès GPU dans le job**
+```bash
+# Dans ton script SLURM ou session interactive
+echo "GPUs disponibles: $CUDA_VISIBLE_DEVICES"
+nvidia-smi
+python -c "import torch; print(f'CUDA disponible: {torch.cuda.is_available()}'); print(f'Nombre de GPUs: {torch.cuda.device_count()}')"
 ```
 
 ## Configuration de l'environnement
@@ -195,12 +241,17 @@ pip install transformers torch accelerate bitsandbytes
 
 # Test spécifique de Joern
 echo "int main() { return 0; }" > test.c
-joern-parse test.c -o test.cpg
-if [ -f test.cpg ]; then
-    echo "✓ Joern fonctionne correctement"
-    rm test.c test.cpg
+if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    joern-parse test.c -o test.cpg
+    if [ -f test.cpg ]; then
+        echo "✓ Joern fonctionne correctement"
+        rm test.c test.cpg
+    else
+        echo "✗ Problème avec Joern"
+    fi
 else
-    echo "✗ Problème avec Joern"
+    echo "✗ Joern non disponible"
 fi
 ```
 
@@ -225,7 +276,22 @@ print('Tous les tests sont passés avec succès!')
 "
 ```
 
-### 5. Génération des index
+### 5. Test GPU (si disponible)
+```bash
+# Vérifier l'accès GPU
+python -c "
+import torch
+print(f'CUDA disponible: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'Nombre de GPUs: {torch.cuda.device_count()}')
+    print(f'GPU actuel: {torch.cuda.get_device_name()}')
+    print(f'VRAM totale: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+else:
+    print('Aucun GPU disponible')
+"
+```
+
+### 6. Génération des index
 ```bash
 # Générer les bases de connaissances
 python rag/scripts/migration/migrate_kb1_to_whoosh.py
@@ -235,7 +301,7 @@ python rag/scripts/migration/migrate_kb3_code_faiss.py
 
 ## Scripts de soumission SLURM
 
-### 1. Script d'évaluation
+### 1. Script d'évaluation (CPU)
 ```bash
 # evaluation_job.sh
 #!/bin/bash
@@ -279,43 +345,7 @@ python evaluation/detection/evaluation_runner.py \
 echo "Evaluation completed successfully"
 ```
 
-### 2. Script de test rapide
-```bash
-# quick_test.sh
-#!/bin/bash
-#SBATCH --account=def-username
-#SBATCH --time=1:00:00
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=8
-#SBATCH --output=logs/quick_test_%j.out
-#SBATCH --error=logs/quick_test_%j.err
-
-module load python/3.9
-module load java/11
-source venv/bin/activate
-
-# Configuration pour le cluster
-export TMPDIR=$SLURM_TMPDIR
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export FAISS_NUM_THREADS=4
-
-# Configuration Hugging Face
-export HF_HOME=/scratch/$USER/vulnrag/huggingface
-export TRANSFORMERS_CACHE=/scratch/$USER/vulnrag/huggingface/transformers
-export HF_DATASETS_CACHE=/scratch/$USER/vulnrag/huggingface/datasets
-
-# Configuration Joern
-export PATH="$HOME/.local/share/coursier/bin:$PATH"
-
-# Créer les répertoires de logs si nécessaire
-mkdir -p logs
-
-python evaluation/detection/quick_test.py
-
-echo "Quick test completed successfully"
-```
-
-### 3. Script avec GPU (optionnel)
+### 2. Script d'évaluation avec GPU
 ```bash
 # evaluation_gpu_job.sh
 #!/bin/bash
@@ -352,6 +382,10 @@ export PATH="$HOME/.local/share/coursier/bin:$PATH"
 # Créer les répertoires de logs si nécessaire
 mkdir -p logs
 
+# Vérifier GPU
+echo "GPU disponible: $CUDA_VISIBLE_DEVICES"
+nvidia-smi
+
 # Lancer l'évaluation avec GPU
 python evaluation/detection/evaluation_runner.py \
   --detectors vulnrag-qwen2.5 vulnrag-kirito \
@@ -361,18 +395,54 @@ python evaluation/detection/evaluation_runner.py \
 echo "GPU evaluation completed successfully"
 ```
 
+### 3. Script de test rapide
+```bash
+# quick_test.sh
+#!/bin/bash
+#SBATCH --account=def-username
+#SBATCH --time=1:00:00
+#SBATCH --mem=32G
+#SBATCH --cpus-per-task=8
+#SBATCH --output=logs/quick_test_%j.out
+#SBATCH --error=logs/quick_test_%j.err
+
+module load python/3.9
+module load java/11
+source venv/bin/activate
+
+# Configuration pour le cluster
+export TMPDIR=$SLURM_TMPDIR
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export FAISS_NUM_THREADS=4
+
+# Configuration Hugging Face
+export HF_HOME=/scratch/$USER/vulnrag/huggingface
+export TRANSFORMERS_CACHE=/scratch/$USER/vulnrag/huggingface/transformers
+export HF_DATASETS_CACHE=/scratch/$USER/vulnrag/huggingface/datasets
+
+# Configuration Joern
+export PATH="$HOME/.local/share/coursier/bin:$PATH"
+
+# Créer les répertoires de logs si nécessaire
+mkdir -p logs
+
+python evaluation/detection/quick_test.py
+
+echo "Quick test completed successfully"
+```
+
 ## Utilisation
 
 ### 1. Soumettre un job
 ```bash
-# Évaluation complète
+# Évaluation complète (CPU)
 sbatch evaluation_job.sh
+
+# Évaluation avec GPU
+sbatch evaluation_gpu_job.sh
 
 # Test rapide
 sbatch quick_test.sh
-
-# Avec GPU
-sbatch evaluation_gpu_job.sh
 ```
 
 ### 2. Surveiller les jobs
@@ -431,12 +501,12 @@ export CUDA_VISIBLE_DEVICES=0
 ## Dépannage
 
 ### Problèmes courants
-1. **Joern non trouvé** : Vérifier l'installation via coursier et Java
-2. **Semgrep non trouvé** : Installer via `pip install semgrep`
-3. **Modules non trouvés** : Vérifier la disponibilité sur Cedar
+1. **Joern non trouvé** : Vérifier l'installation via coursier et ajouter au PATH
+2. **Semgrep non trouvé** : Installer via `pip install semgrep` dans l'environnement virtuel
+3. **Modules non trouvés** : Vérifier la disponibilité sur Cedar avec `module avail`
 4. **Mémoire insuffisante** : Augmenter --mem dans le script SLURM
 5. **Timeout** : Augmenter --time dans le script SLURM
-6. **GPU non disponible** : Vérifier la disponibilité des GPUs sur Cedar
+6. **GPU non disponible** : Vérifier avec `sinfo -p gpu` et `squeue -p gpu`
 
 ### Logs utiles
 ```bash
@@ -450,14 +520,18 @@ tail -f evaluation_log.txt
 ls -la /scratch/username/vulnrag/huggingface/
 
 # Test Joern
-joern-parse --help
+~/.local/share/coursier/bin/joern-parse --help
+
+# Test GPU
+nvidia-smi
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 ```
 
 ## Avantages de Hugging Face sur Cedar
 
 1. **Pas de serveur local** : Pas besoin de démarrer/arrêter Ollama
 2. **Cache intelligent** : Les modèles sont mis en cache automatiquement
-3. **Gestion mémoire** : Meilleure gestion de la mémoire avec torch
+3. **Gestion mémoire** : Meilleure gestion avec PyTorch
 4. **Support GPU** : Utilisation native des GPUs avec CUDA
 5. **Flexibilité** : Facile de changer de modèle ou de version
 6. **Stabilité** : Plus stable dans un environnement de cluster 

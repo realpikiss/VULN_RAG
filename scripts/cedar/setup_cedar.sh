@@ -59,7 +59,7 @@ echo "Installation des dépendances Python..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Installer les outils statiques
+# Installer les outils statiques (dans l'environnement virtuel)
 echo "Installation des outils statiques..."
 pip install flawfinder semgrep
 
@@ -69,12 +69,13 @@ if ! command -v cppcheck &> /dev/null; then
     conda install -c conda-forge cppcheck -y
 fi
 
-# Installation de Joern (CRITIQUE pour CPG)
+# Installation de Joern (CRITIQUE pour CPG) - Sans droits admin
 echo "Installation de Joern..."
-if ! command -v joern-parse &> /dev/null; then
+if ! command -v joern-parse &> /dev/null && [ ! -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
     echo "Joern non trouvé, installation via coursier..."
     
-    # Installer coursier
+    # Installer coursier dans le répertoire utilisateur
+    cd ~
     curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
     chmod +x cs
     ./cs setup
@@ -82,18 +83,22 @@ if ! command -v joern-parse &> /dev/null; then
     # Installer Joern
     ./cs install joern
     
-    # Ajouter au PATH
-    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    # Retourner au répertoire projet
+    cd "$PROJECT_DIR"
     
     # Vérifier l'installation
-    if command -v joern-parse &> /dev/null; then
+    if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
         echo "✓ Joern installé avec succès"
+        export PATH="$HOME/.local/share/coursier/bin:$PATH"
     else
         echo "✗ Échec de l'installation de Joern"
         exit 1
     fi
 else
     echo "✓ Joern déjà installé"
+    if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
+        export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    fi
 fi
 
 # Créer le fichier .env
@@ -141,11 +146,15 @@ for tool in "${tools[@]}"; do
     fi
 done
 
-# Joern (CRITIQUE pour CPG extraction):
+# Joern (CRITIQUE pour CPG)
 echo "2. Joern (CPG extraction):"
 if command -v joern-parse &> /dev/null && command -v joern-export &> /dev/null; then
     echo "  ✓ joern-parse: $(which joern-parse)"
     echo "  ✓ joern-export: $(which joern-export)"
+elif [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
+    echo "  ✓ joern-parse: $HOME/.local/share/coursier/bin/joern-parse"
+    echo "  ✓ joern-export: $HOME/.local/share/coursier/bin/joern-export"
+    echo "  ⚠️  Joern installé mais pas dans PATH - ajouter: export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\""
 else
     echo "  ✗ Joern: NON TROUVÉ - CRITIQUE pour CPG extraction"
 fi
@@ -165,6 +174,15 @@ python -c "import torch; print('  ✓ torch')" 2>/dev/null || echo "  ✗ torch"
 python -c "import sentence_transformers; print('  ✓ sentence_transformers')" 2>/dev/null || echo "  ✗ sentence_transformers"
 python -c "import faiss; print('  ✓ faiss')" 2>/dev/null || echo "  ✗ faiss"
 python -c "import whoosh; print('  ✓ whoosh')" 2>/dev/null || echo "  ✗ whoosh"
+
+# GPU (si disponible)
+echo "5. GPU:"
+if command -v nvidia-smi &> /dev/null; then
+    echo "  ✓ nvidia-smi disponible"
+    python -c "import torch; print(f'  ✓ PyTorch CUDA: {torch.cuda.is_available()}')" 2>/dev/null || echo "  ✗ PyTorch CUDA: Erreur"
+else
+    echo "  ⚠️  nvidia-smi non disponible (pas de GPU ou pas dans un job GPU)"
+fi
 
 echo "=== Fin de vérification ==="
 EOF
@@ -193,7 +211,8 @@ print('Tous les tests sont passés avec succès!')
 # Test spécifique de Joern
 echo "Test de Joern..."
 echo "int main() { return 0; }" > test.c
-if command -v joern-parse &> /dev/null; then
+if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
     joern-parse test.c -o test.cpg
     if [ -f test.cpg ]; then
         echo "✓ Joern fonctionne correctement"
@@ -203,6 +222,25 @@ if command -v joern-parse &> /dev/null; then
     fi
 else
     echo "✗ Joern non disponible"
+fi
+
+# Test GPU (si disponible)
+echo "Test GPU..."
+if command -v nvidia-smi &> /dev/null; then
+    echo "GPU détecté:"
+    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits
+    python -c "
+import torch
+print(f'CUDA disponible: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'Nombre de GPUs: {torch.cuda.device_count()}')
+    print(f'GPU actuel: {torch.cuda.get_device_name()}')
+    print(f'VRAM totale: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+else:
+    print('Aucun GPU disponible')
+"
+else
+    echo "Aucun GPU détecté (normal si pas dans un job GPU)"
 fi
 
 # Rendre les scripts exécutables
@@ -311,7 +349,36 @@ def test_tools():
         else:
             print("✗ joern-parse non disponible")
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        print("✗ joern-parse non trouvé")
+        # Essayer le chemin complet
+        try:
+            result = subprocess.run(['$HOME/.local/share/coursier/bin/joern-parse', '--help'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                print("✓ joern-parse disponible (chemin complet)")
+            else:
+                print("✗ joern-parse non trouvé")
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            print("✗ joern-parse non trouvé")
+
+def test_gpu():
+    """Test GPU"""
+    print("\nTest GPU...")
+    
+    import subprocess
+    
+    try:
+        result = subprocess.run(['nvidia-smi'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            print("✓ nvidia-smi disponible")
+            import torch
+            print(f"✓ PyTorch CUDA: {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                print(f"✓ Nombre de GPUs: {torch.cuda.device_count()}")
+        else:
+            print("✗ nvidia-smi non disponible")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        print("⚠️  nvidia-smi non trouvé (pas de GPU ou pas dans un job GPU)")
 
 if __name__ == "__main__":
     print("=== Test de configuration VulnRAG ===\n")
@@ -320,6 +387,7 @@ if __name__ == "__main__":
     success &= test_imports()
     test_environment()
     test_tools()
+    test_gpu()
     
     if success:
         print("\n✓ Configuration réussie!")
@@ -340,10 +408,14 @@ echo "2. Tester la configuration: python test_setup.py"
 echo "3. Générer les index: python rag/scripts/migration/migrate_*.py"
 echo "4. Lancer un test rapide: sbatch scripts/cedar/quick_test.sh"
 echo "5. Lancer l'évaluation complète: sbatch scripts/cedar/evaluation_job.sh"
+echo "6. Pour GPU: salloc --gres=gpu:1 puis sbatch scripts/cedar/evaluation_gpu_job.sh"
 echo ""
 echo "Répertoires créés:"
 echo "  - Projet: $PROJECT_DIR"
 echo "  - Cache HF: $CACHE_DIR"
 echo "  - Logs: $PROJECT_DIR/logs"
 echo ""
-echo "N'oubliez pas de modifier les scripts SLURM avec votre nom d'utilisateur!" 
+echo "N'oubliez pas de modifier les scripts SLURM avec votre nom d'utilisateur!"
+echo ""
+echo "Pour utiliser Joern, ajoutez à votre ~/.bashrc:"
+echo "export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\"" 
