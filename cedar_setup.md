@@ -535,3 +535,32 @@ python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 4. **Support GPU** : Utilisation native des GPUs avec CUDA
 5. **Flexibilité** : Facile de changer de modèle ou de version
 6. **Stabilité** : Plus stable dans un environnement de cluster 
+
+## ✅ **Parfait ! Maintenant sur Cedar :**
+
+### **1. Mettre à jour le code :**
+```bash
+git pull
+```
+
+### **2. Lancer le script de réparation :**
+```bash
+<code_block_to_apply_changes_from>
+```
+
+## 🔧 **Ce que fait le script de réparation :**
+
+1. **Nettoie l'environnement virtuel** (supprime et recrée)
+2. **Installe NumPy compatible** Cedar (>=1.24.4)
+3. **Installe PyTorch avec CUDA** (version 2.1.0)
+4. **Installe toutes les dépendances** avec les bonnes versions
+5. **Installe Joern** via coursier
+6. **Vérifie l'installation** de tous les packages
+
+## 🎯 **Après la réparation :**
+
+Tu pourras lancer :
+- **Test GPU :** `sbatch scripts/cedar/gpu_test.sh`
+- **Évaluation :** `sbatch scripts/cedar/evaluation_gpu_job.sh`
+
+**Lance le script de réparation sur Cedar !** 🚀 

@@ -6,6 +6,7 @@ echo "=== Réparation de l'installation VulnRAG ==="
 module load python/3.11.5
 module load cuda/12.2
 module load java/11.0.22
+module load arrow/12.0.1
 
 # Activer l'environnement virtuel
 source venv/bin/activate
@@ -34,7 +35,7 @@ echo "7. Installation de Joern via coursier..."
 # Installer coursier si pas déjà fait
 if ! command -v coursier &> /dev/null; then
     echo "Installation de coursier..."
-    curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
+    curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz | gzip -d > cs
     chmod +x cs
     ./cs setup
     export PATH="$HOME/.local/share/coursier/bin:$PATH"
