@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=def-vernet
+#SBATCH --account=def-fouts+
 #SBATCH --time=4:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
@@ -7,10 +7,10 @@
 #SBATCH --error=logs/evaluation_%j.err
 
 # Charger les modules
-module load python/3.9
+module load python/3.11.5
 module load gcc/9.3.0
 module load llvm/12.0.0
-module load java/11
+module load java/11.0.22
 
 # Activer l'environnement
 source venv/bin/activate

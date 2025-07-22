@@ -36,10 +36,10 @@ mkdir -p "$PROJECT_DIR"/joern
 
 # Charger les modules nécessaires
 echo "Chargement des modules..."
-module load python/3.9
+module load python/3.11.5
 module load gcc/9.3.0
 module load llvm/12.0.0
-module load java/11
+module load java/11.0.22
 
 # Vérifier que les modules sont chargés
 echo "Vérification des modules..."
@@ -408,14 +408,20 @@ echo "2. Tester la configuration: python test_setup.py"
 echo "3. Générer les index: python rag/scripts/migration/migrate_*.py"
 echo "4. Lancer un test rapide: sbatch scripts/cedar/quick_test.sh"
 echo "5. Lancer l'évaluation complète: sbatch scripts/cedar/evaluation_job.sh"
-echo "6. Pour GPU: salloc --gres=gpu:1 puis sbatch scripts/cedar/evaluation_gpu_job.sh"
+echo "6. Pour GPU: sbatch scripts/cedar/gpu_test.sh"
 echo ""
 echo "Répertoires créés:"
 echo "  - Projet: $PROJECT_DIR"
 echo "  - Cache HF: $CACHE_DIR"
 echo "  - Logs: $PROJECT_DIR/logs"
 echo ""
-echo "N'oubliez pas de modifier les scripts SLURM avec votre nom d'utilisateur!"
+echo "Configuration spécifique à votre compte:"
+echo "  - Compte: def-fouts+"
+echo "  - Partition GPU: gpubase_bygpu_b6"
+echo "  - GPU: v100l"
+echo "  - Python: 3.11.5"
+echo "  - CUDA: 12.2"
+echo "  - Java: 11.0.22"
 echo ""
 echo "Pour utiliser Joern, ajoutez à votre ~/.bashrc:"
 echo "export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\"" 

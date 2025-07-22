@@ -1,21 +1,16 @@
 #!/bin/bash
-#SBATCH --account=def-vernet
+#SBATCH --account=def-fouts+
 #SBATCH --time=2:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
 #SBATCH --partition=gpubase_bygpu_b6
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:v100l:1
 #SBATCH --output=logs/evaluation_gpu_%j.out
 #SBATCH --error=logs/evaluation_gpu_%j.err
 
-# Charger les modules
-module load python/3.9
-module load gcc/9.3.0
-module load llvm/12.0.0
-module load cuda/11.4
-module load java/11
-
-# Activer l'environnement
+module load python/3.11.5
+module load cuda/12.2
+module load java/11.0.22
 source venv/bin/activate
 
 # Configuration pour le cluster

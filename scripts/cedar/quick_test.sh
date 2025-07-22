@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --account=def-vernet
+#SBATCH --account=def-fouts+
 #SBATCH --time=1:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/quick_test_%j.out
 #SBATCH --error=logs/quick_test_%j.err
 
-module load python/3.9
-module load java/11
+module load python/3.11.5
+module load java/11.0.22
 source venv/bin/activate
 
 # Configuration pour le cluster

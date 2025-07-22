@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --account=def-vernet
+#SBATCH --account=def-fouts+
 #SBATCH --time=0:30:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpubase_bygpu_b6
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:v100l:1
 #SBATCH --output=logs/gpu_test_%j.out
 #SBATCH --error=logs/gpu_test_%j.err
 
-module load python/3.9
-module load cuda/11.4
+module load python/3.11.5
+module load cuda/12.2
 source venv/bin/activate
 
 # Configuration GPU
