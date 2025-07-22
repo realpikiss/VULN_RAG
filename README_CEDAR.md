@@ -80,4 +80,22 @@ streamlit run app.py
 ### Problèmes courants
 1. **NumPy 2.x incompatible** → Installer `numpy<2.0.0`
 2. **Joern non trouvé** → Vérifier le PATH avec `export PATH="$HOME/.local/share/coursier/bin:$PATH"`
-3. **CUDA non disponible** → Vérifier qu'on est dans un job GPU avec `nvidia-smi` 
+3. **CUDA non disponible** → Vérifier qu'on est dans un job GPU avec `nvidia-smi`
+
+## 📊 Knowledge Bases
+
+Le système utilise 3 bases de connaissances spécialisées :
+
+| Base | Technologie | Contenu | Usage |
+|------|------------|---------|-------|
+| **KB1** | Whoosh | Documents de vulnérabilités enrichis | Recherche sémantique textuelle |
+| **KB2** | HNSW | Embeddings de graphes CPG | Similarité structurelle |
+| **KB3** | HNSW | Embeddings de code brut | Similarité directe de code |
+
+### Génération des index
+```bash
+# Générer les bases de connaissances
+python rag/scripts/migration/migrate_kb1_to_whoosh.py
+python rag/scripts/migration/migrate_kb2_to_hnsw.py
+python rag/scripts/migration/migrate_kb3_code_hnsw.py
+``` 

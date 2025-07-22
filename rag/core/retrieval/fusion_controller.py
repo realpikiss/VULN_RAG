@@ -151,12 +151,12 @@ class Vuln_RAGRetrievalController:
         if self._kb2_searcher is None:
             sys.path.append(str(Path(__file__).parent.parent.parent / "scripts" / "retrieval"))
             try:
-                from search_kb2_faiss import get_kb2_structure_searcher
+                from search_kb2_hnsw import get_kb2_structure_searcher
                 self._kb2_searcher = get_kb2_structure_searcher(
                     self.kb2_index_path, self.kb2_metadata_path
                 )
             except ImportError:
-                logger.error("Unable to import search_kb2_faiss")
+                logger.error("Unable to import search_kb2_hnsw")
                 raise
         return self._kb2_searcher
     
@@ -165,12 +165,12 @@ class Vuln_RAGRetrievalController:
         if self._kb3_searcher is None:
             sys.path.append(str(Path(__file__).parent.parent.parent / "scripts" / "retrieval"))
             try:
-                from search_kb3_code_faiss import get_kb3_searcher
+                from search_kb3_code_hnsw import get_kb3_searcher
                 self._kb3_searcher = get_kb3_searcher(
                     self.kb3_index_path, self.kb3_metadata_path
                 )
             except ImportError:
-                logger.error("Unable to import search_kb3_code_faiss")
+                logger.error("Unable to import search_kb3_code_hnsw")
                 raise
         return self._kb3_searcher
     

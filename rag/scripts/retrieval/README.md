@@ -5,24 +5,24 @@ for querying the three knowledge bases that back the RAG system.
 
 | Module | Engine | Description |
 | ------ | ------ | ----------- |
-| **`search_kb1.py`** | Whoosh BM25F | Text search over vulnerability _purpose_ / _function_ fields enriched with CPG metadata. Supports advanced filters (keys, CWE) and hybrid boosting with FAISS candidates. Returns **full documents** with 25+ fields. |
-| **`search_kb2_faiss.py`** | FAISS inner-product | Structure-level similarity search on pre-computed vectors (dimension 384). Extremely fast thanks to singleton caching of the index + metadata. |
-| **`search_kb3_code_faiss.py`** | FAISS + Sentence-Transformer | On-the-fly encoding of code snippets with `all-MiniLM-L6-v2` followed by FAISS search. Singleton cache for both model and index keeps response times low. |
+| **`search_kb1.py`** | Whoosh BM25F | Text search over vulnerability _purpose_ / _function_ fields enriched with CPG metadata. Supports advanced filters (keys, CWE) and hybrid boosting with HNSW candidates. Returns **full documents** with 25+ fields. |
+| **`search_kb2_hnsw.py`** | HNSW inner-product | Structure-level similarity search on pre-computed vectors (dimension 384). Extremely fast thanks to singleton caching of the index + metadata. |
+| **`search_kb3_code_hnsw.py`** | HNSW + Sentence-Transformer | On-the-fly encoding of code snippets with `all-MiniLM-L6-v2` followed by HNSW search. Singleton cache for both model and index keeps response times low. |
 
 ## Usage (CLI)
 Every searcher can be executed as a script:
 
 ```bash
 python -m rag.scripts.retrieval.search_kb1 --help
-python -m rag.scripts.retrieval.search_kb2_faiss --help
-python -m rag.scripts.retrieval.search_kb3_code_faiss --help
+python -m rag.scripts.retrieval.search_kb2_hnsw --help
+python -m rag.scripts.retrieval.search_kb3_code_hnsw --help
 ```
 
 ## Caching Helpers
 
 `get_kb2_structure_searcher()` and
 `get_kb3_code_searcher()` expose memoised singletons so that long-running
-services (e.g. FastAPI) never reload the heavy FAISS data structures.
+services (e.g. FastAPI) never reload the heavy HNSW data structures.
 
 ## Environment Variables
 See each module header for the exact list, but the most common are:

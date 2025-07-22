@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 # Add 'scripts' directory to PYTHONPATH to import retrieval
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from retrieval.search_kb3_code_faiss import get_kb3_searcher
+from retrieval.search_kb3_code_hnsw import get_kb3_searcher
 
 snippet_path = Path(__file__).resolve().parent / "test_snippet.c"
 with open(snippet_path, "r", encoding="utf-8") as f:

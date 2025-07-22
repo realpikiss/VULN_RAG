@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from retrieval.search_kb2_faiss import get_kb2_structure_searcher
+from retrieval.search_kb2_hnsw import get_kb2_structure_searcher
 
 if __name__ == "__main__":
     import argparse
