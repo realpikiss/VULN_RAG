@@ -1,0 +1,6 @@
+{
+  "total_samples": 1172,
+  "vulnerable_samples": 586,
+  "non_vulnerable_samples": 586,
+  "vulnerability_rate": 0.5
+}

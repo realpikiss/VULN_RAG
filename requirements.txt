@@ -7,8 +7,15 @@ numpy==1.24.3
 pandas==2.0.3
 scikit-learn==1.3.0
 
-# LLM and AI dependencies
-ollama==0.1.7
+# Hugging Face and PyTorch dependencies
+transformers==4.35.0
+torch==2.1.0
+accelerate==0.24.0
+bitsandbytes==0.41.0
+tokenizers==0.14.0
+datasets==2.14.0
+
+# External API support (optional)
 openai==1.3.0
 anthropic==0.7.0
 
