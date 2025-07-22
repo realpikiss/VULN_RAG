@@ -1,3 +1,6 @@
 # Large data / indices
 rag/data/KBs/
 rag/data/Dataset/
+rag/data/KB_json/
+rag/data/indexes/
+rag/data/cache/
