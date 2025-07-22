@@ -6,7 +6,6 @@ echo "=== Réparation de l'installation VulnRAG ==="
 module load python/3.11.5
 module load cuda/12.2
 module load java/11.0.22
-module load arrow/12.0.1
 
 # Activer l'environnement virtuel
 source venv/bin/activate
