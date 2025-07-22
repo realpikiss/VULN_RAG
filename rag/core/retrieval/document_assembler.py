@@ -242,22 +242,21 @@ class DocumentAssembler:
             except Exception:
                 doc_data["dangerous_functions"] = []
             
-            # Patch analysis from KB2
+            # Patch analysis from KB2 - extract individual fields instead of storing as dict
             try:
                 patch_analysis = self._parse_json_field(
                     whoosh_doc.get("patch_analysis", "{}"), default={}
                 )
-                doc_data["patch_analysis"] = patch_analysis
+                # Extract individual fields that are already in EnrichedDocument
+                doc_data["dangerous_functions_added"] = patch_analysis.get("dangerous_functions_added", [])
+                doc_data["dangerous_functions_removed"] = patch_analysis.get("dangerous_functions_removed", [])
+                doc_data["net_dangerous_change"] = patch_analysis.get("net_dangerous_change", 0)
             except Exception:
-                doc_data["patch_analysis"] = {}
+                doc_data["dangerous_functions_added"] = []
+                doc_data["dangerous_functions_removed"] = []
+                doc_data["net_dangerous_change"] = 0
             
-            # Parsing JSON fields stored in Whoosh
-            doc_data["dangerous_functions_added"] = self._parse_json_field(
-                whoosh_doc.get("dangerous_functions_added", ""), default=[]
-            )
-            doc_data["dangerous_functions_removed"] = self._parse_json_field(
-                whoosh_doc.get("dangerous_functions_removed", ""), default=[]
-            )
+            # Parsing JSON fields stored in Whoosh (dangerous_functions_added/removed already handled above)
             doc_data["vulnerability_behavior"] = self._parse_json_field(
                 whoosh_doc.get("vulnerability_behavior", ""), default={}
             )

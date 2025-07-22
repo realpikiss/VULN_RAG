@@ -5,7 +5,7 @@ import ollama
 
 
 class LLMExtractor:
-    def __init__(self, model: str = "kirito1/qwen3-coder:latest"):
+    def __init__(self, model: str = "qwen2.5-coder:latest"):
         self.model = model
         self.cache = {} # Cache pour éviter les doublons
         try:

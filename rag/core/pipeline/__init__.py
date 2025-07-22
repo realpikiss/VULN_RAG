@@ -65,6 +65,7 @@ class VulnRAGPipeline:
         *,
         llm_interface=None,
         cpg_generator=None,
+        llm_model: str = "qwen2.5-coder:latest",
         kb1_index_path: Optional[str] = os.getenv("KB1_INDEX_PATH"),
         kb2_index_path: Optional[str] = os.getenv("KB2_INDEX_PATH"),
         kb2_metadata_path: Optional[str] = os.getenv("KB2_METADATA_PATH"),
@@ -79,7 +80,7 @@ class VulnRAGPipeline:
         # 1. Preprocessing pipeline (LLM + CPG)
         # The new minimal interface only needs the model names; advanced injection
         # of custom interfaces can be added later.
-        self.preprocessor: PreprocessingPipeline = create_pipeline()
+        self.preprocessor: PreprocessingPipeline = create_pipeline(llm_model=llm_model)
 
         # 2. Retrieval controller RRF
         self.retrieval: Vuln_RAGRetrievalController = Vuln_RAGRetrievalController(
@@ -167,22 +168,22 @@ class VulnRAGPipeline:
         
         prompt.extend([
             f"## Supported CWEs: {', '.join(self.SUPPORTED_CWES)}",
-            "## Arbitration Instructions",
+            "## Step-by-Step Analysis Instructions",
             (
-                "Based on the above results, provide a final verdict on the code vulnerability. "
-                "LLM arbitration should be robust and consider all available signals.\n\n"
+                "You are a cybersecurity expert analyzing C code for vulnerabilities. Follow these steps:\n\n"
+                "STEP 1: Examine the code structure and identify potential security issues\n"
+                "STEP 2: Check for common vulnerability patterns (buffer overflows, format strings, etc.)\n"
+                "STEP 3: Consider static/heuristic results as additional context\n"
+                "STEP 4: Assess the severity and likelihood of exploitation\n"
+                "STEP 5: Make your independent decision\n\n"
+                "**CRITICAL: Be independent!** Don't just agree with static analysis. Think for yourself!\n\n"
                 "**Decision Criteria:**\n"
-                "• Use 'VULNERABLE' if you can clearly identify a security vulnerability with high confidence\n"
-                "• Use 'SAFE' if the code appears secure based on available analysis\n"
-                "• Use 'NEED MORE CONTEXT' if:\n"
-                "  - Static and heuristic results conflict significantly\n"
-                "  - Code complexity makes it difficult to determine vulnerability without examples\n"
-                "  - Multiple CWE patterns could apply and you need similar cases to decide\n"
-                "  - Code context or usage patterns are unclear\n"
-                "• Use 'OUT OF SCOPE' if vulnerability doesn't match supported CWEs\n\n"
-                f"If the detected vulnerability does not match any supported CWE, respond STRICTLY with 'OUT OF SCOPE'.\n"
+                "• Use 'VULNERABLE' if you identify a security vulnerability (even if tools missed it)\n"
+                "• Use 'SAFE' if the code appears secure (even if tools flagged it)\n"
+                "• Use 'NEED MORE CONTEXT' if you need more information to decide\n\n"
+                "**Remember**: Static tools can miss subtle vulnerabilities. Be thorough!\n\n"
                 "Respond STRICTLY in this JSON format:\n"
-                "{\n  \"verdict\": \"VULNERABLE\"|\"SAFE\"|\"NEED MORE CONTEXT\"|\"OUT OF SCOPE\",\n  \"cwe\": \"CWE-XXX\",\n  \"confidence\": 0.0-1.0,\n  \"explanation\": \"...\",\n  \"reasoning\": \"Detailed arbitration reasoning\"\n}"
+                "{\n  \"verdict\": \"VULNERABLE\"|\"SAFE\"|\"NEED MORE CONTEXT\",\n  \"cwe\": \"CWE-XXX\",\n  \"confidence\": 0.0-1.0,\n  \"explanation\": \"Brief explanation of your findings\",\n  \"vulnerability_type\": \"Specific type if vulnerable (e.g., buffer_overflow, format_string)\",\n  \"affected_lines\": \"Line numbers or code sections of concern\",\n  \"reasoning\": \"Your independent analysis reasoning\"\n}"
             )
         ])
         return "\n".join(prompt)
@@ -195,7 +196,7 @@ class VulnRAGPipeline:
         code: str,
         *,
         top_k: int = 5,
-        llm_model: str = "ovftank/unisast:latest",
+        llm_model: str = "qwen2.5-coder:latest",
         progress_callback=None,
     ) -> Dict[str, Any]:
         """Detection : static → (optional) RAG → Qwen."""
@@ -249,20 +250,51 @@ class VulnRAGPipeline:
         
         update_progress(f"🗳️ Voting results - Static: {votes['static']}, Heuristic: {votes['heuristic']}", 0.3)
         
-        # NEW LOGIC: Always perform LLM arbitration for better robustness
-        # Only exception: if both analyses agree on SAFE AND heuristic has high confidence
-        if votes["static"] == "SAFE" and votes["heuristic"] == "SAFE" and heuristic_res.risk_score < 0.1:
+        # VALUE-ADDED MODE: LLM for complex cases where it adds real value
+        static_issues = len(static_res.get("cppcheck_issues", [])) + len(static_res.get("clang_tidy_issues", [])) + len(static_res.get("flawfinder_issues", []))
+        heuristic_risk = heuristic_res.risk_score
+        code_lines = len(code.split('\n'))
+        
+        # Fast path: Clear agreement between tools (no LLM needed)
+        # EVALUATION MODE: Very strict to catch subtle vulnerabilities
+        if votes["static"] == "SAFE" and votes["heuristic"] == "SAFE" and heuristic_risk < 0.01 and code_lines < 10:
             decision = "SAFE"
-            update_progress("✅ Both analyses agree with high confidence: code appears safe", 0.35)
-        else:
+            update_progress("✅ Both analyses agree: code appears safe (fast path)", 0.35)
+        # Fast path: Clear vulnerability detected (no LLM needed)
+        elif votes["static"] == "VULN" and votes["heuristic"] == "VULN" and heuristic_risk > 0.7:
+            decision = "VULNERABLE"
+            update_progress("⚠️ Both analyses agree: vulnerability detected (fast path)", 0.35)
+        # Fast path: Simple code with low risk (no LLM needed)
+        elif code_lines < 20 and static_issues == 0 and heuristic_risk < 0.2:
+            decision = "SAFE"
+            update_progress("✅ Simple code with low risk: safe (fast path)", 0.35)
+        # Fast path: Obvious vulnerability patterns (no LLM needed)
+        elif static_issues > 3 and heuristic_risk > 0.8:
+            decision = "VULNERABLE"
+            update_progress("⚠️ Multiple high-risk indicators: vulnerable (fast path)", 0.35)
+        # LLM for complex cases where it adds value
+        # More sensitive to potential subtle vulnerabilities
+        # Force LLM for dangerous patterns even with low risk
+        elif (static_issues > 1 and heuristic_risk > 0.3) or (code_lines > 30) or (votes["static"] != votes["heuristic"]) or any(pattern in code.lower() for pattern in ["strcpy", "strlen", "strcat", "sprintf", "gets"]):
             decision = "ACTIVATE_LLM_ARBITRATION"
-            update_progress("🤖 Activating LLM arbitration for robust decision", 0.35)
+            update_progress("🤖 Activating LLM for complex case analysis", 0.35)
+        else:
+            # Default to static+heuristic for edge cases
+            decision = "SAFE" if votes["static"] == "SAFE" else "VULNERABLE"
+            update_progress("⚡ Using static+heuristic for edge case", 0.35)
 
         if decision == "SAFE":
+            # Calculate confidence for static+heuristic agreement
+            static_confidence = 0.6 + (static_issues * 0.05)  # More issues = higher confidence in SAFE
+            heuristic_confidence = 1.0 - heuristic_risk  # Low risk = high confidence in SAFE
+            final_confidence = (static_confidence * 0.6) + (heuristic_confidence * 0.4)
+            
             result = create_base_result()
             result.update({
                 "decision": decision,
                 "is_vulnerable": decision == "VULNERABLE",
+                "confidence": final_confidence,
+                "decision_analysis": "STATIC_HEURISTIC_AGREEMENT",
                 "votes": votes,
                 "static": static_res,
                 "static_summary": static_res,  # Pour Streamlit
@@ -272,10 +304,34 @@ class VulnRAGPipeline:
                     "total": static_time_s,
                 },
             })
-            update_progress(f"🎯 Analysis completed: {decision}", 1.0)
+            update_progress(f"🎯 Analysis completed: {decision} (confidence: {final_confidence:.2f})", 1.0)
             return result
 
-        # --- SYSTEMATIC LLM ARBITRATION ---
+        elif decision == "VULNERABLE":
+            # Calculate confidence for static+heuristic agreement
+            static_confidence = min(0.3 + (static_issues * 0.1), 0.8) if static_res["security_assessment"] == "POTENTIALLY_VULNERABLE" else 0.6
+            heuristic_confidence = heuristic_risk
+            final_confidence = (static_confidence * 0.6) + (heuristic_confidence * 0.4)
+            
+            result = create_base_result()
+            result.update({
+                "decision": decision,
+                "is_vulnerable": decision == "VULNERABLE",
+                "confidence": final_confidence,
+                "decision_analysis": "STATIC_HEURISTIC_AGREEMENT",
+                "votes": votes,
+                "static": static_res,
+                "static_summary": static_res,  # Pour Streamlit
+                "heuristic": heuristic_res.to_dict() if hasattr(heuristic_res, "to_dict") else {},
+                "timings_s": {
+                    "static": static_time_s,
+                    "total": static_time_s,
+                },
+            })
+            update_progress(f"🎯 Analysis completed: {decision} (confidence: {final_confidence:.2f})", 1.0)
+            return result
+
+        # --- LLM ARBITRATION ONLY WHEN NECESSARY ---
         update_progress("🤖 Running LLM arbitration for robust decision...", 0.4)
         static_prompt = self._build_static_llm_prompt(code, static_res, heuristic_res)
         llm_start = time.time()
@@ -291,19 +347,62 @@ class VulnRAGPipeline:
             except Exception:
                 pass
         
-        # Normalisation du verdict
+        # Normalisation du verdict avec critères objectifs
         if "verdict" in parsed:
             verdict = parsed["verdict"].upper()
         else:
-            verdict = "NEED MORE CONTEXT"
+            # Fallback intelligent basé sur les signaux
+            static_issues = len(static_res.get("cppcheck_issues", [])) + len(static_res.get("clang_tidy_issues", [])) + len(static_res.get("flawfinder_issues", []))
+            heuristic_risk = heuristic_res.risk_score
+            
+            # Critères objectifs pour NEED MORE CONTEXT
+            needs_more_context = (
+                (static_issues > 2 and heuristic_risk > 0.3) or  # Conflit d'outils
+                (heuristic_risk > 0.7 and static_res["security_assessment"] == "LIKELY_SAFE") or  # Heuristic très inquiet, static rassuré
+                (static_issues > 5) or  # Beaucoup d'issues statiques
+                (len(code.split('\n')) > 50)  # Code très long
+            )
+            
+            verdict = "NEED MORE CONTEXT" if needs_more_context else "SAFE"
+        
+        # Ensure confidence is always present
+        if "confidence" not in parsed or parsed["confidence"] is None:
+            parsed["confidence"] = 0.7  # Default confidence
         
         if verdict in ["VULNERABLE", "SAFE"]:
+            # Calculate confidence based on actual tool results
+            llm_confidence = parsed.get("confidence", 0.7)  # From LLM response
+            
+            # Static confidence: based on number and severity of issues
+            static_issues = (
+                len(static_res.get("cppcheck_issues", [])) +
+                len(static_res.get("clang_tidy_issues", [])) +
+                len(static_res.get("flawfinder_issues", []))
+            )
+            static_confidence = min(0.3 + (static_issues * 0.1), 0.8) if static_res["security_assessment"] == "POTENTIALLY_VULNERABLE" else 0.6
+            
+            # Heuristic confidence: use actual Semgrep risk score
+            heuristic_confidence = heuristic_res.risk_score
+            
+            # Weighted confidence: LLM (50%) + Static (30%) + Heuristic (20%)
+            weighted_confidence = (llm_confidence * 0.5) + (static_confidence * 0.3) + (heuristic_confidence * 0.2)
+            
+            # Boost confidence if tools agree with LLM verdict
+            agreement_boost = 0.0
+            if votes["static"] == votes["heuristic"]:
+                if (verdict == "VULNERABLE" and votes["static"] == "VULN") or (verdict == "SAFE" and votes["static"] == "SAFE"):
+                    agreement_boost = 0.1
+            
+            final_confidence = min(weighted_confidence + agreement_boost, 0.95)
+            
             result = create_base_result()
             result.update({
                 "decision": verdict,
                 "is_vulnerable": verdict == "VULNERABLE",
+                "confidence": final_confidence,
                 "cwe": parsed.get("cwe"),
                 "explanation": parsed.get("explanation"),
+                "decision_analysis": "LLM_ARBITRATION",
                 "static": static_res,
                 "static_summary": static_res,
                 "llm_raw": llm_response,
@@ -316,10 +415,11 @@ class VulnRAGPipeline:
                     "total": static_time_s + llm_time,
                 },
             })
-            update_progress(f"🎯 LLM arbitration completed: {verdict}", 1.0)
+            update_progress(f"🎯 LLM arbitration completed: {verdict} (confidence: {final_confidence:.2f})", 1.0)
             return result
         
         # If LLM arbitration is inconclusive, escalate to full RAG
+        logger.info(f"🔍 NEED MORE CONTEXT triggered - Static issues: {len(static_res.get('cppcheck_issues', [])) + len(static_res.get('clang_tidy_issues', [])) + len(static_res.get('flawfinder_issues', []))}, Heuristic risk: {heuristic_res.risk_score:.2f}, Code lines: {len(code.split(chr(10)))}")
         update_progress("🔍 LLM arbitration inconclusive, activating full RAG pipeline...", 0.5)
 
         # 2. Full RAG escalated
@@ -348,12 +448,11 @@ class VulnRAGPipeline:
         import json
         static_summary = json.dumps(static_res, indent=2)
         prompt_body = ContextBuilder.build_detection_context(code, docs)
-        # Add supported CWEs list and OUT OF SCOPE instruction to RAG prompt
+        # Add supported CWEs list to RAG prompt
         prompt = (
             f"### Static Analysis Findings\n{static_summary}\n\n" +
             prompt_body +
-            f"\n\n## Supported CWEs: {', '.join(self.SUPPORTED_CWES)}" +
-            "\n## Additional Instructions:\nIf the detected vulnerability does not match any supported CWE, respond STRICTLY with 'OUT OF SCOPE'."
+            f"\n\n## Supported CWEs: {', '.join(self.SUPPORTED_CWES)}"
         )
         logger.info("[4/5] Detection prompt built")
         update_progress("📝 Building comprehensive detection prompt...", 0.85)
@@ -399,19 +498,47 @@ class VulnRAGPipeline:
                 verdict = "NEED MORE CONTEXT"
                 is_vulnerable = None
         
-        # Vérification OUT OF SCOPE CWE
+        # Ensure confidence is always present for full RAG
+        if "confidence" not in parsed or parsed["confidence"] is None:
+            parsed["confidence"] = 0.7  # Default confidence
+        
+        # CWE validation (keep CWE even if not in supported list)
         cwe = parsed.get("cwe")
         if cwe and cwe not in self.SUPPORTED_CWES:
-            verdict = "OUT OF SCOPE"
-            cwe = None
+            # Keep the CWE but mark as unsupported
+            logger.info(f"Unsupported CWE detected: {cwe}")
         
         # Créer résultat final avec structure unifiée
         result = create_base_result()
         result.update(parsed)
         
+        # Calculate confidence for full RAG pipeline
+        llm_confidence = parsed.get("confidence", 0.7)  # From LLM response
+        
+        # Static confidence: based on actual issues found
+        static_issues = (
+            len(static_res.get("cppcheck_issues", [])) +
+            len(static_res.get("clang_tidy_issues", [])) +
+            len(static_res.get("flawfinder_issues", []))
+        )
+        static_confidence = min(0.3 + (static_issues * 0.1), 0.8) if static_res["security_assessment"] == "POTENTIALLY_VULNERABLE" else 0.6
+        
+        # Heuristic confidence: use actual Semgrep risk score
+        heuristic_confidence = heuristic_res.risk_score
+        
+        # Full RAG gets higher weight for LLM (70%) since it has enriched context
+        weighted_confidence = (llm_confidence * 0.7) + (static_confidence * 0.2) + (heuristic_confidence * 0.1)
+        
+        # Boost confidence if we found relevant documents
+        doc_boost = min(len(docs) * 0.05, 0.15)  # Up to 0.15 boost for 3+ docs
+        
+        final_confidence = min(weighted_confidence + doc_boost, 0.95)
+        
         # Ensure unified fields
         result["decision"] = verdict
         result["is_vulnerable"] = is_vulnerable
+        result["confidence"] = final_confidence
+        result["decision_analysis"] = "FULL_RAG_PIPELINE"
         
         # Données garanties
         result["votes"] = votes
@@ -429,7 +556,7 @@ class VulnRAGPipeline:
             "total": (time.time() - overall_start),
         }
         
-        update_progress(f"🎯 Full analysis completed: {result['decision']}", 1.0)
+        update_progress(f"🎯 Full analysis completed: {result['decision']} (confidence: {final_confidence:.2f})", 1.0)
         return result
 
     def patch(
@@ -438,7 +565,7 @@ class VulnRAGPipeline:
         detection_result: Optional[Dict[str, Any]] = None,
         *,
         top_k: int = 5,
-        llm_model: str = "ovftank/unisast:latest",
+        llm_model: str = "qwen2.5-coder:latest",
         progress_callback=None,
     ) -> str:
         """Patch generation (Qwen) based on detection_result."""
