@@ -35,7 +35,14 @@ La branche `cedar-migration` a été créée et poussée sur GitHub avec tous le
 - ✅ `cedar_setup.md` : Instructions détaillées de configuration
 - ✅ Scripts de test et de validation
 
-### 6. **Nettoyage et optimisation**
+### 6. **Vérification et installation des outils (CRITIQUE)**
+- ✅ **Joern** : Installation via coursier pour l'extraction CPG
+- ✅ **Semgrep** : Installation pour les heuristiques avancées
+- ✅ **Cppcheck, Clang-Tidy, Flawfinder** : Outils statiques
+- ✅ Script de vérification automatique (`check_tools.sh`)
+- ✅ Test spécifique de Joern dans le setup
+
+### 7. **Nettoyage et optimisation**
 - ✅ Mise à jour du `.gitignore` pour exclure les fichiers volumineux
 - ✅ Suppression des fichiers volumineux de l'historique Git
 - ✅ Optimisation des dépendances
@@ -58,19 +65,25 @@ git checkout cedar-migration
 bash scripts/cedar/setup_cedar.sh
 ```
 
-### 2. **Test de la configuration**
+### 2. **Vérification des outils**
+```bash
+# Vérifier tous les outils installés
+./check_tools.sh
+```
+
+### 3. **Test de la configuration**
 ```bash
 python test_setup.py
 ```
 
-### 3. **Génération des index**
+### 4. **Génération des index**
 ```bash
 python rag/scripts/migration/migrate_kb1_to_whoosh.py
 python rag/scripts/migration/migrate_kb2_to_faiss.py
 python rag/scripts/migration/migrate_kb3_code_faiss.py
 ```
 
-### 4. **Lancement des évaluations**
+### 5. **Lancement des évaluations**
 ```bash
 # Test rapide
 sbatch scripts/cedar/quick_test.sh
@@ -116,8 +129,9 @@ cedar-migration/
 │   ├── quick_test.sh           # Test rapide
 │   ├── evaluation_gpu_job.sh   # Évaluation GPU
 │   └── setup_cedar.sh          # Configuration automatique
-└── rag/core/generation/
-    └── huggingface_interface.py # Interface Hugging Face
+├── rag/core/generation/
+│   └── huggingface_interface.py # Interface Hugging Face
+└── check_tools.sh              # Vérification des outils
 ```
 
 ## 🛠️ Personnalisation nécessaire
@@ -129,12 +143,31 @@ cedar-migration/
 sed -i 's/username/VOTRE_NOM_UTILISATEUR/g' scripts/cedar/*.sh
 ```
 
+## 🔍 Outils critiques vérifiés
+
+### **Outils statiques**
+- ✅ **Cppcheck** : Analyse statique de sécurité
+- ✅ **Clang-Tidy** : Vérifications de qualité et sécurité
+- ✅ **Flawfinder** : Détection de patterns de vulnérabilités
+- ✅ **Semgrep** : Heuristiques avancées
+
+### **Outils de preprocessing**
+- ✅ **Joern** : Extraction CPG (Code Property Graphs) - CRITIQUE
+- ✅ **Java 11+** : Requis pour Joern
+
+### **Outils ML/AI**
+- ✅ **Hugging Face** : Modèles de langage
+- ✅ **PyTorch** : Framework de deep learning
+- ✅ **FAISS** : Recherche vectorielle
+- ✅ **Whoosh** : Recherche textuelle
+
 ## 📞 Support et dépannage
 
 - **Documentation** : Voir `README_CEDAR.md` et `cedar_setup.md`
 - **Scripts** : Tous les scripts sont dans `scripts/cedar/`
 - **Logs** : Vérifiez les logs dans `logs/`
 - **Configuration** : Le fichier `.env` est créé automatiquement
+- **Vérification** : Utilisez `./check_tools.sh` pour diagnostiquer les problèmes
 
 ## ✅ Statut de la migration
 
@@ -143,12 +176,22 @@ sed -i 's/username/VOTRE_NOM_UTILISATEUR/g' scripts/cedar/*.sh
 - [x] Scripts SLURM créés
 - [x] Documentation complète
 - [x] Dépendances mises à jour
+- [x] **Vérification des outils critiques** (Joern, Semgrep, etc.)
+- [x] Script de setup automatique avec tests
 - [x] Branche poussée sur GitHub
 - [ ] Test sur Cedar (à faire)
 - [ ] Validation des performances (à faire)
+
+## 🚨 Points critiques à vérifier
+
+1. **Joern** : Essentiel pour l'extraction CPG - vérifier l'installation via coursier
+2. **Java 11+** : Requis pour Joern - charger le module approprié
+3. **Semgrep** : Pour les heuristiques - installer via pip
+4. **Modules Cedar** : Vérifier la disponibilité des modules (python, gcc, llvm, java)
+5. **Permissions** : S'assurer d'avoir les droits d'écriture dans `/scratch/`
 
 ---
 
 **La migration est prête !** 🎉
 
-Vous pouvez maintenant déployer VulnRAG sur ComputeCanada Cedar en suivant les instructions dans `README_CEDAR.md`. 
+Vous pouvez maintenant déployer VulnRAG sur ComputeCanada Cedar en suivant les instructions dans `README_CEDAR.md`. **N'oubliez pas de vérifier les outils critiques avec `./check_tools.sh` avant de lancer les évaluations !** 
