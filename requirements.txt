@@ -12,7 +12,6 @@ datasets
 sentence-transformers
 
 # Vector databases
-faiss-cpu
 whoosh
 
 # Web interface
