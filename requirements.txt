@@ -1,44 +1,28 @@
 # Core dependencies
-numpy>=1.24.4
-pandas>=1.5.0
-scikit-learn>=1.3.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
+numpy<2.0.0
+pandas
+scikit-learn
 
-# Web interface
-streamlit>=1.28.0
-gradio>=3.50.0
-
-# Hugging Face ecosystem
+# Hugging Face
 transformers==4.35.0
 torch==2.1.0
 accelerate==0.24.0
-bitsandbytes==0.41.0
 tokenizers==0.14.0
 datasets==2.14.0
-sentence-transformers>=2.2.0
+sentence-transformers
 
 # Vector databases
-faiss-cpu>=1.7.0
-whoosh>=2.7.0
+faiss-cpu
+whoosh
 
-# Static analysis tools
-semgrep>=1.40.0
-flawfinder>=2.0.0
+# Web interface
+streamlit
 
-# Code processing
-tree-sitter>=0.20.0
-pycparser>=2.21.0
+# Static analysis
+semgrep
+flawfinder
 
 # Utilities
-tqdm>=4.65.0
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-python-dotenv>=1.0.0
-click>=8.1.0
-rich>=13.0.0
-
-# Testing
-pytest>=7.4.0
-pytest-cov>=4.1.0
+tqdm
+requests
+python-dotenv
