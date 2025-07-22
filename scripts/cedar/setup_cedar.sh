@@ -1,427 +1,183 @@
 #!/bin/bash
 # Script de configuration automatique pour ComputeCanada Cedar
 
-set -e  # Arrêter en cas d'erreur
-
 echo "=== Configuration VulnRAG pour ComputeCanada Cedar ==="
-
-# Vérifier que nous sommes sur Cedar
-if [[ ! "$(hostname)" =~ cedar ]]; then
-    echo "ATTENTION: Ce script est conçu pour ComputeCanada Cedar"
-    echo "Hostname actuel: $(hostname)"
-    read -p "Continuer quand même? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-# Configuration des variables
-USERNAME=$(whoami)
-PROJECT_DIR="/scratch/$USERNAME/vulnrag"
-CACHE_DIR="/scratch/$USERNAME/vulnrag/huggingface"
-
-echo "Utilisateur: $USERNAME"
-echo "Répertoire projet: $PROJECT_DIR"
-echo "Répertoire cache: $CACHE_DIR"
+echo "Utilisateur: $USER"
+echo "Répertoire projet: $(pwd)"
+echo "Répertoire cache: /scratch/$USER/vulnrag/huggingface"
 
 # Créer la structure des répertoires
 echo "Création de la structure des répertoires..."
-mkdir -p "$PROJECT_DIR"/{data,models,logs,results}
-mkdir -p "$PROJECT_DIR"/kb1_index
-mkdir -p "$PROJECT_DIR"/kb2_index
-mkdir -p "$PROJECT_DIR"/kb3_index
-mkdir -p "$CACHE_DIR"/{transformers,datasets}
-mkdir -p "$PROJECT_DIR"/joern
+mkdir -p /scratch/$USER/vulnrag/huggingface/transformers
+mkdir -p /scratch/$USER/vulnrag/huggingface/datasets
+mkdir -p logs
 
-# Charger les modules nécessaires
+# Charger les modules disponibles
 echo "Chargement des modules..."
 module load python/3.11.5
-module load gcc/9.3.0
-module load llvm/12.0.0
+module load cuda/12.2
 module load java/11.0.22
 
-# Vérifier que les modules sont chargés
-echo "Vérification des modules..."
-python --version
-gcc --version
-clang-tidy --version
-java -version
+# Vérifier les modules chargés
+echo "Modules chargés:"
+module list
 
 # Créer l'environnement virtuel
 echo "Création de l'environnement virtuel..."
-cd "$PROJECT_DIR"
 python -m venv venv
 source venv/bin/activate
 
-# Installer les dépendances
-echo "Installation des dépendances Python..."
+# Mettre à jour pip
+echo "Mise à jour de pip..."
 pip install --upgrade pip
+
+# Installer les dépendances
+echo "Installation des dépendances..."
 pip install -r requirements.txt
 
-# Installer les outils statiques (dans l'environnement virtuel)
-echo "Installation des outils statiques..."
-pip install flawfinder semgrep
-
-# Vérifier l'installation de cppcheck
-if ! command -v cppcheck &> /dev/null; then
-    echo "Installation de cppcheck..."
-    conda install -c conda-forge cppcheck -y
-fi
-
-# Installation de Joern (CRITIQUE pour CPG) - Sans droits admin
+# Installation de Joern via coursier (non-admin)
 echo "Installation de Joern..."
-if ! command -v joern-parse &> /dev/null && [ ! -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
-    echo "Joern non trouvé, installation via coursier..."
-    
-    # Installer coursier dans le répertoire utilisateur
-    cd ~
+if ! command -v coursier &> /dev/null; then
+    echo "Installation de coursier..."
     curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-apple-darwin.gz | gzip -d > cs
     chmod +x cs
     ./cs setup
-    
-    # Installer Joern
-    ./cs install joern
-    
-    # Retourner au répertoire projet
-    cd "$PROJECT_DIR"
-    
-    # Vérifier l'installation
-    if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
-        echo "✓ Joern installé avec succès"
-        export PATH="$HOME/.local/share/coursier/bin:$PATH"
-    else
-        echo "✗ Échec de l'installation de Joern"
-        exit 1
-    fi
-else
-    echo "✓ Joern déjà installé"
-    if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
-        export PATH="$HOME/.local/share/coursier/bin:$PATH"
-    fi
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
 fi
 
-# Créer le fichier .env
-echo "Création du fichier .env..."
+# Installer Joern
+export PATH="$HOME/.local/share/coursier/bin:$PATH"
+coursier launch --fork io.shiftleft:joern:2.0.0 --main io.shiftleft.joern.JoernParse -- joern-parse --help > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ Joern installé avec succès"
+else
+    echo "⚠️ Joern installation échouée, mais on continue..."
+fi
+
+# Installation des outils de sécurité
+echo "Installation des outils de sécurité..."
+pip install semgrep
+pip install flawfinder
+
+# Vérification des outils
+echo "Vérification des outils..."
+
+# Vérifier Python
+if command -v python &> /dev/null; then
+    echo "✓ Python: $(python --version)"
+else
+    echo "❌ Python non trouvé"
+fi
+
+# Vérifier les outils de compilation
+if command -v gcc &> /dev/null; then
+    echo "✓ GCC: $(gcc --version | head -n1)"
+else
+    echo "❌ GCC non trouvé"
+fi
+
+if command -v clang &> /dev/null; then
+    echo "✓ Clang: $(clang --version | head -n1)"
+else
+    echo "❌ Clang non trouvé"
+fi
+
+# Vérifier les outils de sécurité
+if command -v cppcheck &> /dev/null; then
+    echo "✓ Cppcheck: $(cppcheck --version | head -n1)"
+else
+    echo "⚠️ Cppcheck non trouvé (peut être installé via module)"
+fi
+
+if command -v clang-tidy &> /dev/null; then
+    echo "✓ Clang-tidy: $(clang-tidy --version | head -n1)"
+else
+    echo "⚠️ Clang-tidy non trouvé (peut être installé via module)"
+fi
+
+if command -v flawfinder &> /dev/null; then
+    echo "✓ Flawfinder: $(flawfinder --version)"
+else
+    echo "❌ Flawfinder non trouvé"
+fi
+
+if command -v semgrep &> /dev/null; then
+    echo "✓ Semgrep: $(semgrep --version)"
+else
+    echo "❌ Semgrep non trouvé"
+fi
+
+# Vérifier Joern
+export PATH="$HOME/.local/share/coursier/bin:$PATH"
+if command -v joern-parse &> /dev/null; then
+    echo "✓ Joern: disponible"
+else
+    echo "⚠️ Joern non trouvé (installation manuelle requise)"
+fi
+
+# Vérifier Java
+if command -v java &> /dev/null; then
+    echo "✓ Java: $(java -version 2>&1 | head -n1)"
+else
+    echo "❌ Java non trouvé"
+fi
+
+# Vérifier CUDA
+if command -v nvidia-smi &> /dev/null; then
+    echo "✓ CUDA: $(nvidia-smi --version | head -n1)"
+else
+    echo "⚠️ CUDA non trouvé (peut être disponible dans un job GPU)"
+fi
+
+# Vérifier les packages Python
+echo "Vérification des packages Python..."
+python -c "
+import torch
+print(f'✓ PyTorch: {torch.__version__}')
+print(f'✓ CUDA disponible: {torch.cuda.is_available()}')
+
+import transformers
+print(f'✓ Transformers: {transformers.__version__}')
+
+import faiss
+print(f'✓ FAISS: {faiss.__version__}')
+
+import whoosh
+print(f'✓ Whoosh: {whoosh.__version__}')
+"
+
+# Configuration des variables d'environnement
+echo "Configuration des variables d'environnement..."
 cat > .env << EOF
-# Chemins des bases de connaissances
-KB1_INDEX_PATH=$PROJECT_DIR/kb1_index
-KB2_INDEX_PATH=$PROJECT_DIR/kb2_index
-KB2_METADATA_PATH=$PROJECT_DIR/kb2_metadata.json
-KB3_INDEX_PATH=$PROJECT_DIR/kb3_index
-KB3_METADATA_PATH=$PROJECT_DIR/kb3_metadata.json
-
-# Configuration Hugging Face
-HF_HOME=$CACHE_DIR
-TRANSFORMERS_CACHE=$CACHE_DIR/transformers
-HF_DATASETS_CACHE=$CACHE_DIR/datasets
-
-# Configuration pour le cluster
-SLURM_JOB_ID=\$SLURM_JOB_ID
-SLURM_TMPDIR=\$SLURM_TMPDIR
-
-# Modèles Hugging Face
-QWEN2_5_MODEL=Qwen/Qwen2.5-7B-Instruct
-KIRITO_MODEL=Qwen/Qwen2.5-14B-Instruct
+# Configuration Cedar
+HF_HOME=/scratch/$USER/vulnrag/huggingface
+TRANSFORMERS_CACHE=/scratch/$USER/vulnrag/huggingface/transformers
+HF_DATASETS_CACHE=/scratch/$USER/vulnrag/huggingface/datasets
 
 # Configuration Joern
-JOERN_HOME=$PROJECT_DIR/joern
-JAVA_HOME=\$JAVA_HOME
+PATH=\$PATH:\$HOME/.local/share/coursier/bin
+
+# Configuration GPU
+CUDA_VISIBLE_DEVICES=0
+PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+# Configuration cluster
+TMPDIR=\$SLURM_TMPDIR
+OMP_NUM_THREADS=\$SLURM_CPUS_PER_TASK
+FAISS_NUM_THREADS=4
 EOF
 
-# Script de vérification des outils
-echo "Création du script de vérification..."
-cat > check_tools.sh << 'EOF'
-#!/bin/bash
-echo "=== Vérification des outils VulnRAG ==="
-
-# Outils statiques
-echo "1. Outils statiques:"
-tools=("cppcheck" "clang-tidy" "flawfinder" "semgrep")
-for tool in "${tools[@]}"; do
-    if command -v $tool &> /dev/null; then
-        echo "  ✓ $tool: $(which $tool)"
-    else
-        echo "  ✗ $tool: NON TROUVÉ"
-    fi
-done
-
-# Joern (CRITIQUE pour CPG)
-echo "2. Joern (CPG extraction):"
-if command -v joern-parse &> /dev/null && command -v joern-export &> /dev/null; then
-    echo "  ✓ joern-parse: $(which joern-parse)"
-    echo "  ✓ joern-export: $(which joern-export)"
-elif [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
-    echo "  ✓ joern-parse: $HOME/.local/share/coursier/bin/joern-parse"
-    echo "  ✓ joern-export: $HOME/.local/share/coursier/bin/joern-export"
-    echo "  ⚠️  Joern installé mais pas dans PATH - ajouter: export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\""
-else
-    echo "  ✗ Joern: NON TROUVÉ - CRITIQUE pour CPG extraction"
-fi
-
-# Java
-echo "3. Java (requis pour Joern):"
-if command -v java &> /dev/null; then
-    echo "  ✓ Java: $(java -version 2>&1 | head -1)"
-else
-    echo "  ✗ Java: NON TROUVÉ"
-fi
-
-# Python packages
-echo "4. Python packages:"
-python -c "import transformers; print('  ✓ transformers')" 2>/dev/null || echo "  ✗ transformers"
-python -c "import torch; print('  ✓ torch')" 2>/dev/null || echo "  ✗ torch"
-python -c "import sentence_transformers; print('  ✓ sentence_transformers')" 2>/dev/null || echo "  ✗ sentence_transformers"
-python -c "import faiss; print('  ✓ faiss')" 2>/dev/null || echo "  ✗ faiss"
-python -c "import whoosh; print('  ✓ whoosh')" 2>/dev/null || echo "  ✗ whoosh"
-
-# GPU (si disponible)
-echo "5. GPU:"
-if command -v nvidia-smi &> /dev/null; then
-    echo "  ✓ nvidia-smi disponible"
-    python -c "import torch; print(f'  ✓ PyTorch CUDA: {torch.cuda.is_available()}')" 2>/dev/null || echo "  ✗ PyTorch CUDA: Erreur"
-else
-    echo "  ⚠️  nvidia-smi non disponible (pas de GPU ou pas dans un job GPU)"
-fi
-
-echo "=== Fin de vérification ==="
-EOF
-
-chmod +x check_tools.sh
-
-# Tester l'accès aux modèles Hugging Face
-echo "Test de l'accès aux modèles Hugging Face..."
-python -c "
-from transformers import AutoTokenizer
-import os
-
-# Test du tokenizer Qwen2.5
-print('Test du tokenizer Qwen2.5...')
-tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen2.5-7B-Instruct', trust_remote_code=True)
-print('✓ Tokenizer Qwen2.5 chargé avec succès')
-
-# Test du tokenizer Kirito
-print('Test du tokenizer Kirito...')
-tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen2.5-14B-Instruct', trust_remote_code=True)
-print('✓ Tokenizer Kirito chargé avec succès')
-
-print('Tous les tests sont passés avec succès!')
-"
-
-# Test spécifique de Joern
-echo "Test de Joern..."
-echo "int main() { return 0; }" > test.c
-if [ -f "$HOME/.local/share/coursier/bin/joern-parse" ]; then
-    export PATH="$HOME/.local/share/coursier/bin:$PATH"
-    joern-parse test.c -o test.cpg
-    if [ -f test.cpg ]; then
-        echo "✓ Joern fonctionne correctement"
-        rm test.c test.cpg
-    else
-        echo "✗ Problème avec Joern"
-    fi
-else
-    echo "✗ Joern non disponible"
-fi
-
-# Test GPU (si disponible)
-echo "Test GPU..."
-if command -v nvidia-smi &> /dev/null; then
-    echo "GPU détecté:"
-    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits
-    python -c "
-import torch
-print(f'CUDA disponible: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'Nombre de GPUs: {torch.cuda.device_count()}')
-    print(f'GPU actuel: {torch.cuda.get_device_name()}')
-    print(f'VRAM totale: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
-else:
-    print('Aucun GPU disponible')
-"
-else
-    echo "Aucun GPU détecté (normal si pas dans un job GPU)"
-fi
-
-# Rendre les scripts exécutables
-echo "Configuration des permissions des scripts..."
-chmod +x scripts/cedar/*.sh
-
-# Créer un script de test rapide
-echo "Création d'un script de test rapide..."
-cat > test_setup.py << 'EOF'
-#!/usr/bin/env python3
-"""Script de test rapide pour vérifier la configuration"""
-
-import os
-import sys
-from pathlib import Path
-
-def test_imports():
-    """Test des imports principaux"""
-    print("Test des imports...")
-    
-    try:
-        import torch
-        print(f"✓ PyTorch {torch.__version__}")
-    except ImportError as e:
-        print(f"✗ PyTorch: {e}")
-        return False
-    
-    try:
-        import transformers
-        print(f"✓ Transformers {transformers.__version__}")
-    except ImportError as e:
-        print(f"✗ Transformers: {e}")
-        return False
-    
-    try:
-        import faiss
-        print(f"✓ FAISS")
-    except ImportError as e:
-        print(f"✗ FAISS: {e}")
-        return False
-    
-    try:
-        import whoosh
-        print(f"✓ Whoosh")
-    except ImportError as e:
-        print(f"✗ Whoosh: {e}")
-        return False
-    
-    return True
-
-def test_environment():
-    """Test de l'environnement"""
-    print("\nTest de l'environnement...")
-    
-    # Variables d'environnement
-    env_vars = [
-        'HF_HOME',
-        'TRANSFORMERS_CACHE',
-        'HF_DATASETS_CACHE',
-        'SLURM_JOB_ID',
-        'SLURM_TMPDIR'
-    ]
-    
-    for var in env_vars:
-        value = os.getenv(var, 'Non défini')
-        print(f"  {var}: {value}")
-    
-    # Répertoires
-    dirs = [
-        '/scratch',
-        os.getenv('HF_HOME', ''),
-        os.getenv('TRANSFORMERS_CACHE', '')
-    ]
-    
-    for dir_path in dirs:
-        if dir_path and Path(dir_path).exists():
-            print(f"✓ Répertoire {dir_path} existe")
-        else:
-            print(f"✗ Répertoire {dir_path} n'existe pas")
-
-def test_tools():
-    """Test des outils externes"""
-    print("\nTest des outils externes...")
-    
-    import subprocess
-    
-    tools = ['cppcheck', 'clang-tidy', 'flawfinder', 'semgrep']
-    
-    for tool in tools:
-        try:
-            result = subprocess.run([tool, '--version'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                print(f"✓ {tool} disponible")
-            else:
-                print(f"✗ {tool} non disponible")
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            print(f"✗ {tool} non trouvé")
-    
-    # Test spécifique de Joern
-    try:
-        result = subprocess.run(['joern-parse', '--help'], 
-                              capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print("✓ joern-parse disponible")
-        else:
-            print("✗ joern-parse non disponible")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        # Essayer le chemin complet
-        try:
-            result = subprocess.run(['$HOME/.local/share/coursier/bin/joern-parse', '--help'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                print("✓ joern-parse disponible (chemin complet)")
-            else:
-                print("✗ joern-parse non trouvé")
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            print("✗ joern-parse non trouvé")
-
-def test_gpu():
-    """Test GPU"""
-    print("\nTest GPU...")
-    
-    import subprocess
-    
-    try:
-        result = subprocess.run(['nvidia-smi'], 
-                              capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print("✓ nvidia-smi disponible")
-            import torch
-            print(f"✓ PyTorch CUDA: {torch.cuda.is_available()}")
-            if torch.cuda.is_available():
-                print(f"✓ Nombre de GPUs: {torch.cuda.device_count()}")
-        else:
-            print("✗ nvidia-smi non disponible")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        print("⚠️  nvidia-smi non trouvé (pas de GPU ou pas dans un job GPU)")
-
-if __name__ == "__main__":
-    print("=== Test de configuration VulnRAG ===\n")
-    
-    success = True
-    success &= test_imports()
-    test_environment()
-    test_tools()
-    test_gpu()
-    
-    if success:
-        print("\n✓ Configuration réussie!")
-        sys.exit(0)
-    else:
-        print("\n✗ Configuration échouée!")
-        sys.exit(1)
-EOF
-
-chmod +x test_setup.py
-
+echo "✓ Configuration terminée !"
 echo ""
-echo "=== Configuration terminée ==="
+echo "=== RÉSUMÉ ==="
+echo "Compte: def-foutsekh"
+echo "Partition GPU: gpubase_bygpu_b6"
+echo "Type GPU: v100l"
+echo "Modules: python/3.11.5, cuda/12.2, java/11.0.22"
+echo "Répertoire: /scratch/$USER/vulnrag"
 echo ""
-echo "Prochaines étapes:"
-echo "1. Vérifier les outils: ./check_tools.sh"
-echo "2. Tester la configuration: python test_setup.py"
-echo "3. Générer les index: python rag/scripts/migration/migrate_*.py"
-echo "4. Lancer un test rapide: sbatch scripts/cedar/quick_test.sh"
-echo "5. Lancer l'évaluation complète: sbatch scripts/cedar/evaluation_job.sh"
-echo "6. Pour GPU: sbatch scripts/cedar/gpu_test.sh"
+echo "Pour lancer un test GPU:"
+echo "sbatch scripts/cedar/gpu_test.sh"
 echo ""
-echo "Répertoires créés:"
-echo "  - Projet: $PROJECT_DIR"
-echo "  - Cache HF: $CACHE_DIR"
-echo "  - Logs: $PROJECT_DIR/logs"
-echo ""
-echo "Configuration spécifique à votre compte:"
-echo "  - Compte: def-fouts+"
-echo "  - Partition GPU: gpubase_bygpu_b6"
-echo "  - GPU: v100l"
-echo "  - Python: 3.11.5"
-echo "  - CUDA: 12.2"
-echo "  - Java: 11.0.22"
-echo ""
-echo "Pour utiliser Joern, ajoutez à votre ~/.bashrc:"
-echo "export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\"" 
+echo "Pour lancer une évaluation:"
+echo "sbatch scripts/cedar/evaluation_gpu_job.sh" 
