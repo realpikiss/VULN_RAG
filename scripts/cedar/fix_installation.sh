@@ -22,8 +22,8 @@ pip install --upgrade pip
 echo "3. Installation des dépendances de base..."
 pip install wheel setuptools
 
-echo "4. Installation de NumPy compatible Cedar..."
-pip install "numpy>=1.24.4"
+echo "4. Installation de NumPy 1.x compatible PyTorch..."
+pip install "numpy<2.0.0"
 
 echo "5. Installation de PyTorch avec CUDA..."
 pip install torch==2.1.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
