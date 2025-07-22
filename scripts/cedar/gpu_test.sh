@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=def-fouts+
+#SBATCH --account=def-foutsekh
 #SBATCH --time=0:30:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
